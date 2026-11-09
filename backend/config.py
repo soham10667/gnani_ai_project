@@ -28,7 +28,8 @@ class Settings:
     GNANI_ACCESS_TOKEN: str = os.getenv("GNANI_ACCESS_TOKEN", "")
     GNANI_CUSTOMER_ID: str = os.getenv("GNANI_CUSTOMER_ID", "ApexBank-BFSI")
     GNANI_LANG_CODE: str = os.getenv("GNANI_LANG_CODE", "en-IN")
-    GNANI_STT_ENDPOINT: str = os.getenv("GNANI_STT_ENDPOINT", "https://api.gnani.ai/asr")
+    GNANI_MODEL: str = os.getenv("GNANI_MODEL", "prisma-v3.0")
+    GNANI_STT_ENDPOINT: str = os.getenv("GNANI_STT_ENDPOINT", "https://api.vachana.ai/stt/v3")
     
     # Verification & Confidence Thresholds
     THRESHOLD_HIGH: float = float(os.getenv("THRESHOLD_HIGH", "90.0"))

@@ -470,6 +470,63 @@ export default function VeriVoiceApp() {
     window.speechSynthesis.speak(utterance);
   };
 
+  // Convert browser-recorded audio blob (e.g. WebM/OGG) to clean 16kHz mono 16-bit PCM WAV for Gnani STT
+  const convertBlobToWav = async (blob) => {
+    try {
+      const AudioCtx = window.AudioContext || window.webkitAudioContext;
+      const ctx = new AudioCtx();
+      const arrayBuffer = await blob.arrayBuffer();
+      const audioBuffer = await ctx.decodeAudioData(arrayBuffer);
+      
+      const targetSampleRate = 16000;
+      const offlineCtx = new (window.OfflineAudioContext || window.webkitOfflineAudioContext)(
+        1,
+        Math.max(1, Math.ceil(audioBuffer.duration * targetSampleRate)),
+        targetSampleRate
+      );
+      const source = offlineCtx.createBufferSource();
+      source.buffer = audioBuffer;
+      source.connect(offlineCtx.destination);
+      source.start(0);
+      const renderedBuffer = await offlineCtx.startRendering();
+      
+      const channelData = renderedBuffer.getChannelData(0);
+      const wavBuffer = new ArrayBuffer(44 + channelData.length * 2);
+      const view = new DataView(wavBuffer);
+      
+      const writeString = (view, offset, string) => {
+        for (let i = 0; i < string.length; i++) {
+          view.setUint8(offset + i, string.charCodeAt(i));
+        }
+      };
+      
+      writeString(view, 0, 'RIFF');
+      view.setUint32(4, 36 + channelData.length * 2, true);
+      writeString(view, 8, 'WAVE');
+      writeString(view, 12, 'fmt ');
+      view.setUint32(16, 16, true);
+      view.setUint16(20, 1, true); // PCM format
+      view.setUint16(22, 1, true); // Mono
+      view.setUint32(24, targetSampleRate, true);
+      view.setUint32(28, targetSampleRate * 2, true);
+      view.setUint16(32, 2, true);
+      view.setUint16(34, 16, true);
+      writeString(view, 36, 'data');
+      view.setUint32(40, channelData.length * 2, true);
+      
+      let offset = 44;
+      for (let i = 0; i < channelData.length; i++, offset += 2) {
+        const s = Math.max(-1, Math.min(1, channelData[i]));
+        view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
+      }
+      await ctx.close().catch(() => {});
+      return new Blob([wavBuffer], { type: 'audio/wav' });
+    } catch (e) {
+      console.warn('WAV conversion fallback, using original audio blob:', e);
+      return blob;
+    }
+  };
+
   // Real-time microphone audio capture with Web Audio API & Analyser
   const startMicrophoneCapture = async () => {
     try {
@@ -521,8 +578,9 @@ export default function VeriVoiceApp() {
       };
 
       mediaRecorder.onstop = async () => {
-        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
-        await handleAudioCaptured(audioBlob);
+        const rawBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+        const wavBlob = await convertBlobToWav(rawBlob);
+        await handleAudioCaptured(wavBlob);
       };
 
       mediaRecorder.start();

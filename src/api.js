@@ -52,7 +52,8 @@ export async function updateSession(sessionId, updates) {
 
 export async function transcribeAudioBlob(audioBlob, sessionId = null, activeTargetId = null) {
   const formData = new FormData();
-  formData.append('audio', audioBlob, 'mic_recording.webm');
+  const filename = audioBlob.type === 'audio/wav' ? 'mic_recording.wav' : 'mic_recording.webm';
+  formData.append('audio', audioBlob, filename);
   if (sessionId) formData.append('session_id', sessionId);
   if (activeTargetId) formData.append('active_target_id', activeTargetId);
 
