@@ -1,4 +1,4 @@
--- VeriVoice AI Read-Back Confirmation System Schema
+-- EchoTrust AI Read-Back Confirmation System Schema
 -- For Supabase PostgreSQL / Standard PostgreSQL
 
 -- Enable UUID extension if needed

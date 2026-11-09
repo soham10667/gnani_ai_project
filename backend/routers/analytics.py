@@ -97,6 +97,6 @@ def export_compliance_csv(search: Optional[str] = "", status: Optional[str] = ""
     return Response(
         content=csv_content,
         media_type="text/csv",
-        headers={"Content-Disposition": "attachment; filename=verivoice_compliance_audit.csv"}
+        headers={"Content-Disposition": "attachment; filename=echotrust_compliance_audit.csv"}
     )
 

@@ -197,7 +197,38 @@ const HISTORICAL_SESSIONS = [
   }
 ];
 
-export default function VeriVoiceApp() {
+// Modern EchoTrust Brand Logo Component (Resonant Sound-Wave & Trust Shield)
+function EchoTrustLogo({ className = "w-6 h-6" }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <linearGradient id="echoTrustGrad" x1="2" y1="2" x2="22" y2="22" gradientUnits="userSpaceOnUse">
+          <stop stopColor="#38BDF8" />
+          <stop offset="0.5" stopColor="#3B82F6" />
+          <stop offset="1" stopColor="#6366F1" />
+        </linearGradient>
+      </defs>
+      {/* Outer Protective Trust Shield */}
+      <path 
+        d="M12 2.5L4 6.2V11.5C4 16.8 7.4 21.2 12 22.5C16.6 21.2 20 16.8 20 11.5V6.2L12 2.5Z" 
+        stroke="url(#echoTrustGrad)" 
+        strokeWidth="1.75" 
+        strokeLinecap="round" 
+        strokeLinejoin="round" 
+        fill="url(#echoTrustGrad)" 
+        fillOpacity="0.14" 
+      />
+      {/* Resonant Acoustic Waveform Bars */}
+      <rect x="7" y="10.5" width="1.5" height="3" rx="0.75" fill="#38BDF8" />
+      <rect x="9.5" y="8" width="1.5" height="8" rx="0.75" fill="#60A5FA" />
+      <rect x="12" y="6" width="1.5" height="12" rx="0.75" fill="#FFFFFF" />
+      <rect x="14.5" y="8" width="1.5" height="8" rx="0.75" fill="#818CF8" />
+      <rect x="17" y="10.5" width="1.5" height="3" rx="0.75" fill="#A78BFA" />
+    </svg>
+  );
+}
+
+export default function EchoTrustApp() {
   // Navigation State - Defaults to Analytics as requested in the redesign prompt!
   const [activeTab, setActiveTab] = useState('analytics'); // 'analytics', 'dashboard', 'live', 'entities', 'history', 'settings', 'audit_logs'
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -218,7 +249,7 @@ export default function VeriVoiceApp() {
   const [correctionTarget, setCorrectionTarget] = useState(null);
   const [correctionInput, setCorrectionInput] = useState('');
   const [audioFeedbackNotice, setAudioFeedbackNotice] = useState('');
-  const [sttEngineStatus, setSttEngineStatus] = useState('Gnani-BFSI-v4.2');
+  const [sttEngineStatus, setSttEngineStatus] = useState('EchoTrust-BFSI-v4.2');
 
   // Real-time audio waveform visualizer bars (22 frequency slots)
   const [audioWaveformHeights, setAudioWaveformHeights] = useState(
@@ -253,7 +284,7 @@ export default function VeriVoiceApp() {
     {
       id: 1,
       sender: 'ai',
-      text: 'Hello, welcome to Apex Bank secure verification. Please state your full name to get started.',
+      text: 'Hello, welcome to Apex Bank secure verification powered by EchoTrust. Please state your full name to get started.',
       time: '10:40:12'
     },
     {
@@ -470,7 +501,7 @@ export default function VeriVoiceApp() {
     window.speechSynthesis.speak(utterance);
   };
 
-  // Convert browser-recorded audio blob (e.g. WebM/OGG) to clean 16kHz mono 16-bit PCM WAV for Gnani STT
+  // Convert browser-recorded audio blob (e.g. WebM/OGG) to clean 16kHz mono 16-bit PCM WAV for EchoTrust STT
   const convertBlobToWav = async (blob) => {
     try {
       const AudioCtx = window.AudioContext || window.webkitAudioContext;
@@ -619,7 +650,7 @@ export default function VeriVoiceApp() {
 
   const handleAudioCaptured = async (audioBlob) => {
     setIsProcessingAudio(true);
-    setAudioFeedbackNotice('Transcribing audio stream with Gnani STT engine...');
+    setAudioFeedbackNotice('Transcribing audio stream with EchoTrust STT engine...');
 
     try {
       const targetId = isCorrecting && correctionTarget ? correctionTarget.id : null;
@@ -628,7 +659,7 @@ export default function VeriVoiceApp() {
       if (res && res.transcript) {
         const transcript = res.transcript;
         const conf = res.confidence || 92;
-        setSttEngineStatus(res.stt_engine || 'Gnani-BFSI-v4.2');
+        setSttEngineStatus(res.stt_engine || 'EchoTrust-BFSI-v4.2');
 
         const timeNow = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
         setDialogue(prev => [
@@ -915,20 +946,20 @@ export default function VeriVoiceApp() {
         mobileMenuOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'
       }`}>
         <div>
-          {/* VeriVoice Logo and Branding */}
+          {/* EchoTrust Logo and Branding */}
           <div className="p-5 border-b border-slate-800/80 flex items-center justify-between">
             <div className="flex items-center space-x-3 cursor-pointer" onClick={() => { setActiveTab('analytics'); setMobileMenuOpen(false); }}>
-              <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-blue-600 to-indigo-500 flex items-center justify-center shadow-lg shadow-blue-500/30">
-                <Radio className="w-5 h-5 text-white animate-pulse" />
+              <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-cyan-500 via-blue-600 to-indigo-600 flex items-center justify-center shadow-lg shadow-blue-500/25 ring-1 ring-white/10">
+                <EchoTrustLogo className="w-6 h-6 text-white" />
               </div>
               <div>
                 <div className="flex items-center space-x-2">
-                  <span className="font-extrabold text-lg tracking-tight text-white">VeriVoice</span>
+                  <span className="font-extrabold text-lg tracking-tight text-white">EchoTrust</span>
                   <span className="text-[10px] uppercase font-bold px-1.5 py-0.5 rounded bg-blue-500/25 text-blue-300 border border-blue-400/30">
-                    AI Read-Back
+                    AI Voice
                   </span>
                 </div>
-                <p className="text-[11px] text-slate-400 leading-tight">Banking & Insurance Voice Verification</p>
+                <p className="text-[11px] text-slate-400 leading-tight">Every Voice. Verified with Trust.</p>
               </div>
             </div>
 
@@ -1616,7 +1647,7 @@ export default function VeriVoiceApp() {
                         <div key={msg.id} className={`flex flex-col ${msg.sender === 'user' ? 'items-end' : 'items-start'}`}>
                           <div className="flex items-center space-x-1.5 mb-1 px-1">
                             <span className="text-[10px] font-bold text-slate-500 capitalize">
-                              {msg.sender === 'ai' ? '🤖 VeriVoice AI' : `👤 Customer (${customerName.split(' ')[0]})`}
+                              {msg.sender === 'ai' ? '🤖 EchoTrust AI' : `👤 Customer (${customerName.split(' ')[0]})`}
                             </span>
                             <span className="text-[9px] text-slate-400">{msg.time}</span>
                           </div>
@@ -1923,7 +1954,7 @@ export default function VeriVoiceApp() {
                 </div>
                 <a
                   href={downloadComplianceCSVUrl(historySearch, historyStatusFilter)}
-                  download="verivoice_compliance_audit.csv"
+                  download="echotrust_compliance_audit.csv"
                   className="px-3.5 py-2 text-xs font-semibold bg-white border border-slate-200 rounded-xl text-slate-700 hover:bg-slate-50 flex items-center space-x-1.5 shadow-2xs"
                 >
                   <Download className="w-3.5 h-3.5 text-blue-600" />
@@ -2170,6 +2201,25 @@ export default function VeriVoiceApp() {
             </div>
           )}
         </main>
+
+        {/* EchoTrust Enterprise Footer */}
+        <footer className="mt-auto border-t border-slate-200/80 bg-white/80 backdrop-blur-sm py-4 px-4 sm:px-6 lg:px-8">
+          <div className="max-w-7xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-slate-500">
+            <div className="flex items-center space-x-2">
+              <span className="font-bold text-slate-800">EchoTrust™</span>
+              <span className="text-slate-300">•</span>
+              <span className="font-medium text-slate-600">Every Voice. Verified with Trust.</span>
+            </div>
+            <div className="flex items-center space-x-4 text-[11px]">
+              <span className="text-slate-400">Enterprise BFSI Voice Platform</span>
+              <span className="text-slate-300">•</span>
+              <span className="flex items-center space-x-1.5 text-emerald-600 font-semibold">
+                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                <span>Active Trust Protection</span>
+              </span>
+            </div>
+          </div>
+        </footer>
       </div>
 
       {/* =========================================================
@@ -2193,7 +2243,7 @@ export default function VeriVoiceApp() {
 
             <div className="mt-4 space-y-4">
               <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-xs text-amber-800">
-                <strong>Customer signaled mismatch.</strong> Please capture the corrected value. VeriVoice will automatically regenerate phonetic read-back prompts and prompt the customer for final verification.
+                <strong>Customer signaled mismatch.</strong> Please capture the corrected value. EchoTrust will automatically regenerate phonetic read-back prompts and prompt the customer for final verification.
               </div>
 
               <div>

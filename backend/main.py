@@ -8,7 +8,7 @@ from backend.database import db
 app = FastAPI(
     title=settings.PROJECT_NAME,
     version=settings.VERSION,
-    description="Enterprise BFSI Voice Entity Verification with Phonetic NATO Read-Back & Correction Learning"
+    description="EchoTrust – Enterprise BFSI Voice Entity Verification with Phonetic NATO Read-Back & Correction Learning"
 )
 
 # CORS configuration
@@ -32,7 +32,7 @@ def root():
         "service": settings.PROJECT_NAME,
         "version": settings.VERSION,
         "status": "online",
-        "stt_engine": "Gnani-BFSI-v4.2",
+        "stt_engine": "EchoTrust-BFSI-v4.2",
         "stt_mode": "production" if gnani_stt.is_configured else "mock_simulation",
         "database": "Supabase PostgreSQL" if db.use_supabase else "Resilient SQLite Local/Fallback",
         "docs_url": "/docs"
@@ -40,7 +40,7 @@ def root():
 
 @app.get("/health")
 def health():
-    return {"status": "healthy", "service": "verivoice-backend"}
+    return {"status": "healthy", "service": "echotrust-backend"}
 
 if __name__ == "__main__":
     import uvicorn

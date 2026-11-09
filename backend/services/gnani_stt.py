@@ -15,9 +15,9 @@ class GnaniSTTService:
         # Check if real credentials are provided
         self.is_configured = bool(self.api_key or self.token)
         if self.is_configured:
-            print(f"[Gnani STT] Initialized in PRODUCTION mode targeting {self.endpoint}")
+            print(f"[EchoTrust STT] Initialized in PRODUCTION mode targeting {self.endpoint}")
         else:
-            print("[Gnani STT] Initialized in CLEAR MOCK/SIMULATION mode (No GNANI_API_KEY / GNANI_TOKEN found in environment).")
+            print("[EchoTrust STT] Initialized in CLEAR MOCK/SIMULATION mode (No API key found in environment).")
 
     async def transcribe_audio(
         self,
@@ -92,32 +92,32 @@ class GnaniSTTService:
                             confidence = round(confidence * 100, 1)
                             
                         return {
-                            "mode": "gnani_production",
+                            "mode": "production",
                             "transcript": transcript,
                             "confidence": confidence,
                             "raw_response": res_data,
-                            "model": res_data.get("model", self.model or "Gnani-Prisma-v3.0")
+                            "model": res_data.get("model", self.model or "EchoTrust-Prisma-v3.0")
                         }
                     else:
-                        print(f"[Gnani STT Error] API returned status {response.status_code}: {response.text}")
+                        print(f"[EchoTrust STT Error] API returned status {response.status_code}: {response.text}")
                         # Fallback with error indication
                         return {
-                            "mode": "gnani_error_fallback",
-                            "error": f"Gnani API error: {response.status_code} - {response.text}",
+                            "mode": "error_fallback",
+                            "error": f"STT API error: {response.status_code} - {response.text}",
                             "transcript": "My name is Rahul Sharma and my residential address is 24 MG Road, Pune, 411001.",
                             "confidence": 88.0,
-                            "model": "Gnani-BFSI-v4.2"
+                            "model": "EchoTrust-BFSI-v4.2"
                         }
             except Exception as e:
                 import traceback
-                print(f"[Gnani STT Exception] {repr(e)}")
+                print(f"[EchoTrust STT Exception] {repr(e)}")
                 traceback.print_exc()
                 return {
-                    "mode": "gnani_exception_fallback",
+                    "mode": "exception_fallback",
                     "error": str(e),
                     "transcript": "My name is Rahul Sharma and my phone number is 9876543210.",
                     "confidence": 85.0,
-                    "model": "Gnani-BFSI-v4.2"
+                    "model": "EchoTrust-BFSI-v4.2"
                 }
         else:
             # Explicit, honest mock mode when credentials are not configured
@@ -140,11 +140,11 @@ class GnaniSTTService:
 
             return {
                 "mode": "mock_simulation",
-                "notice": "Mock mode active. Provide GNANI_API_KEY and GNANI_TOKEN in .env for live API calls.",
+                "notice": "Mock mode active. Provide ECHOTRUST_API_KEY or GNANI_API_KEY in .env for live API calls.",
                 "transcript": mock_text,
                 "confidence": mock_conf,
                 "audio_size_bytes": len(audio_bytes),
-                "model": "Gnani-BFSI-v4.2 (Mock Engine)"
+                "model": "EchoTrust-BFSI-v4.2 (Mock Engine)"
             }
 
 gnani_stt = GnaniSTTService()

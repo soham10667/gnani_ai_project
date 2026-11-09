@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" fill="none">
+  <defs>
+    <linearGradient id="bgGrad" x1="0" y1="0" x2="32" y2="32" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#0284C7" />
+      <stop offset="0.5" stop-color="#2563EB" />
+      <stop offset="1" stop-color="#4F46E5" />
+    </linearGradient>
+    <linearGradient id="shieldGrad" x1="4" y1="3" x2="28" y2="29" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#38BDF8" />
+      <stop offset="1" stop-color="#818CF8" />
+    </linearGradient>
+  </defs>
+  <!-- Background Rounded Tile -->
+  <rect width="32" height="32" rx="8" fill="#0A192F" />
+  
+  <!-- Trust Shield Outline -->
+  <path d="M16 4.5L7 8.5V14.5C7 20.5 10.8 25.5 16 27.5C21.2 25.5 25 20.5 25 14.5V8.5L16 4.5Z" 
+        stroke="url(#shieldGrad)" stroke-width="1.75" stroke-linejoin="round" fill="url(#shieldGrad)" fill-opacity="0.12" />
+  
+  <!-- Sound Wave / Resonant Voice Bars -->
+  <rect x="10" y="13.5" width="2" height="5" rx="1" fill="#38BDF8" />
+  <rect x="13" y="10.5" width="2" height="11" rx="1" fill="#60A5FA" />
+  <rect x="16" y="8" width="2" height="16" rx="1" fill="#FFFFFF" />
+  <rect x="19" y="10.5" width="2" height="11" rx="1" fill="#818CF8" />
+  <rect x="22" y="13.5" width="2" height="5" rx="1" fill="#A78BFA" />
+</svg>
+

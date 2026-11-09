@@ -38,7 +38,7 @@ async def transcribe_voice(
             "status": "success",
             "transcript": transcript,
             "confidence": acoustic_conf,
-            "stt_engine": stt_result.get("model", "Gnani-BFSI-v4.2"),
+            "stt_engine": stt_result.get("model", "EchoTrust-BFSI-v4.2"),
             "mode": stt_result.get("mode", "mock_simulation"),
             "extracted_entities": extracted_entities,
             "session_id": session_id
