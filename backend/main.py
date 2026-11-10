@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from backend.config import settings
-from backend.routers import sessions, voice, entities, analytics
+from backend.routers import sessions, voice, entities, analytics, auth
 from backend.services.gnani_stt import gnani_stt
 from backend.database import db
 
@@ -21,6 +21,7 @@ app.add_middleware(
 )
 
 # Mount API Routers
+app.include_router(auth.router)
 app.include_router(sessions.router)
 app.include_router(voice.router)
 app.include_router(entities.router)

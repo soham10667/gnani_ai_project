@@ -40,7 +40,8 @@ class DatabaseManager:
             CREATE TABLE IF NOT EXISTS users (
                 id TEXT PRIMARY KEY,
                 name TEXT NOT NULL,
-                email TEXT,
+                email TEXT UNIQUE,
+                password_hash TEXT,
                 role TEXT,
                 organization TEXT,
                 created_at TEXT
@@ -115,6 +116,20 @@ class DatabaseManager:
                 created_at TEXT
             );
             """)
+
+            # Migration: Ensure password_hash column exists in users table
+            cursor.execute("PRAGMA table_info(users)")
+            columns = [row[1] for row in cursor.fetchall()]
+            if "password_hash" not in columns:
+                try:
+                    cursor.execute("ALTER TABLE users ADD COLUMN password_hash TEXT")
+                except Exception as e:
+                    print(f"Error altering users table: {e}")
+
+            # Ensure default demo user has valid password hash
+            demo_hash = "$2b$12$/fsqcwJxBPZRVdfZbt28t.8V7WncdoqCq532WW1.ajWfBhZQ0fSt6"
+            cursor.execute("UPDATE users SET password_hash = ? WHERE email = 'ananya.k@apexbank.in' AND (password_hash IS NULL OR password_hash = '')", (demo_hash,))
+
             conn.commit()
 
     def _seed_initial_data(self):
@@ -461,6 +476,52 @@ class DatabaseManager:
                 "corrections_run": corrections_run,
                 "accuracy_rate": avg_accuracy,
                 "recent_sessions": recent_sessions
+            }
+
+    # --- USER AUTHENTICATION CRUD ---
+    def get_user_by_email(self, email: str) -> Optional[Dict[str, Any]]:
+        with self._get_sqlite_conn() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM users WHERE LOWER(email) = LOWER(?)", (email.strip(),))
+            row = cursor.fetchone()
+            if row:
+                return dict(row)
+            return None
+
+    def get_user_by_id(self, user_id: str) -> Optional[Dict[str, Any]]:
+        with self._get_sqlite_conn() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM users WHERE id = ?", (user_id,))
+            row = cursor.fetchone()
+            if row:
+                return dict(row)
+            return None
+
+    def create_user(
+        self,
+        name: str,
+        email: str,
+        password_hash: str,
+        role: str = "Verification Officer",
+        organization: str = "Apex Bank BFSI"
+    ) -> Dict[str, Any]:
+        import uuid
+        user_id = f"USR-{uuid.uuid4().hex[:8].upper()}"
+        now_str = datetime.now().isoformat()
+        with self._get_sqlite_conn() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "INSERT INTO users (id, name, email, password_hash, role, organization, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (user_id, name.strip(), email.strip().lower(), password_hash, role, organization, now_str)
+            )
+            conn.commit()
+            return {
+                "id": user_id,
+                "name": name.strip(),
+                "email": email.strip().lower(),
+                "role": role,
+                "organization": organization,
+                "created_at": now_str
             }
 
 db = DatabaseManager()

@@ -68,3 +68,29 @@ class PhoneticGenerateRequest(BaseModel):
     entity_type: Optional[str] = "alpha"
     standard: Optional[str] = "nato"
 
+# --- Authentication Models ---
+class UserRegisterRequest(BaseModel):
+    name: str = Field(..., min_length=2, max_length=100)
+    email: str = Field(..., min_length=5, max_length=120)
+    password: str = Field(..., min_length=6, max_length=100)
+    role: Optional[str] = "Verification Officer"
+    organization: Optional[str] = "Apex Bank BFSI"
+
+class UserLoginRequest(BaseModel):
+    email: str = Field(..., min_length=5, max_length=120)
+    password: str = Field(..., min_length=1)
+
+class UserResponse(BaseModel):
+    id: str
+    name: str
+    email: str
+    role: str
+    organization: str
+    created_at: Optional[str] = None
+
+class AuthResponse(BaseModel):
+    status: str
+    message: str
+    token: str
+    user: UserResponse
+

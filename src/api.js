@@ -1,6 +1,43 @@
 // EchoTrust API Client Service
 const API_BASE = 'http://localhost:8000/api';
 
+// --- Authentication APIs ---
+export async function loginAPI(email, password) {
+  const res = await fetch(`${API_BASE}/auth/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, password })
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(data.detail || 'Invalid email or password');
+  }
+  return data;
+}
+
+export async function registerAPI(name, email, password) {
+  const res = await fetch(`${API_BASE}/auth/register`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, email, password })
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(data.detail || 'Registration failed');
+  }
+  return data;
+}
+
+export async function fetchCurrentUser(token) {
+  const res = await fetch(`${API_BASE}/auth/me`, {
+    headers: {
+      'Authorization': `Bearer ${token}`
+    }
+  });
+  if (!res.ok) throw new Error('Session expired or invalid');
+  return await res.json();
+}
+
 export async function fetchDashboardMetrics() {
   const res = await fetch(`${API_BASE}/analytics/dashboard`);
   if (!res.ok) throw new Error(`Dashboard API error: ${res.statusText}`);
@@ -50,18 +87,85 @@ export async function updateSession(sessionId, updates) {
   return await res.json();
 }
 
-export async function transcribeAudioBlob(audioBlob, sessionId = null, activeTargetId = null) {
+export async function transcribeAudioBlob(audioBlob, sessionId = null, activeTargetId = null, languageCode = 'hi-IN') {
   const formData = new FormData();
   const filename = audioBlob.type === 'audio/wav' ? 'mic_recording.wav' : 'mic_recording.webm';
   formData.append('audio', audioBlob, filename);
   if (sessionId) formData.append('session_id', sessionId);
   if (activeTargetId) formData.append('active_target_id', activeTargetId);
+  if (languageCode) formData.append('language_code', languageCode);
 
   const res = await fetch(`${API_BASE}/voice/transcribe`, {
     method: 'POST',
     body: formData
   });
-  if (!res.ok) throw new Error(`Transcription error: ${res.statusText}`);
+  if (!res.ok) {
+    const errText = await res.text();
+    throw new Error(`Transcription error: ${res.statusText} - ${errText}`);
+  }
+  return await res.json();
+}
+
+export async function processDialogueAPI(text, sessionId = null, activeTargetId = null) {
+  const res = await fetch(`${API_BASE}/voice/process-dialogue`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      text,
+      session_id: sessionId,
+      active_target_id: activeTargetId
+    })
+  });
+  if (!res.ok) throw new Error(`Dialogue error: ${res.statusText}`);
+  return await res.json();
+}
+
+export async function fetchVoiceStatusAPI() {
+  const res = await fetch(`${API_BASE}/voice/status`);
+  if (!res.ok) throw new Error(`Failed to fetch voice status: ${res.statusText}`);
+  return await res.json();
+}
+
+export async function transcribeSampleAudioAPI(sessionId = null, activeTargetId = null) {
+  const formData = new FormData();
+  if (sessionId) formData.append('session_id', sessionId);
+  if (activeTargetId) formData.append('active_target_id', activeTargetId);
+
+  const res = await fetch(`${API_BASE}/voice/transcribe-sample`, {
+    method: 'POST',
+    body: formData
+  });
+  if (!res.ok) throw new Error(`Sample audio error: ${res.statusText}`);
+  return await res.json();
+}
+
+export function getTTSAudioUrl(text, voice = 'Shubham', model = 'timbre-v3.0', speed = 1.0) {
+  const params = new URLSearchParams({
+    text,
+    voice,
+    model,
+    speed: speed.toString()
+  });
+  return `${API_BASE}/voice/tts?${params.toString()}`;
+}
+
+export async function synthesizeSpeechAPI(text, { voice = 'Shubham', model = 'timbre-v3.0', speed = 1.0 } = {}) {
+  const res = await fetch(`${API_BASE}/voice/tts`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text, voice, model, speed })
+  });
+  if (!res.ok) {
+    const errText = await res.text();
+    throw new Error(`TTS API error: ${res.statusText} - ${errText}`);
+  }
+  const blob = await res.blob();
+  return URL.createObjectURL(blob);
+}
+
+export async function fetchTTSVoicesAPI() {
+  const res = await fetch(`${API_BASE}/voice/tts/voices`);
+  if (!res.ok) throw new Error(`Failed to fetch TTS voices: ${res.statusText}`);
   return await res.json();
 }
 

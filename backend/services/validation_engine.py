@@ -9,8 +9,8 @@ class BFSIValidationEngine:
         if not val:
             return {"is_valid": False, "status": "invalid", "message": "Name cannot be empty", "normalized": "", "modifier": -30.0}
         
-        # Check allowed characters (letters, spaces, dots, hyphens)
-        if not re.match(r"^[A-Za-z\s\.\-']+$", val):
+        # Check allowed characters (letters, spaces, dots, hyphens, and Devanagari)
+        if not re.match(r"^[A-Za-z\u0900-\u097F\s\.\-']+$", val):
             return {"is_valid": False, "status": "invalid", "message": "Name contains invalid non-alphabetic characters", "normalized": val, "modifier": -25.0}
         
         parts = val.split()
@@ -71,7 +71,7 @@ class BFSIValidationEngine:
     @staticmethod
     def validate_address(value: str) -> Dict[str, Any]:
         val = value.strip()
-        if len(val) < 10:
+        if len(val) < 2:
             return {"is_valid": False, "status": "invalid", "message": "Address is too brief for policy dispatch or KYC verification", "normalized": val, "modifier": -25.0}
             
         # Check 6-digit Indian PIN code
@@ -81,31 +81,30 @@ class BFSIValidationEngine:
         # Check city or street indicators
         has_street = bool(re.search(r'\b(road|rd|street|st|nagar|colony|lane|flat|house|sector|block|marg)\b', val, re.IGNORECASE))
         
-        if not has_pin:
+        if has_pin and has_street:
             return {
                 "is_valid": True,
-                "status": "warning",
-                "message": "Missing standard 6-digit postal PIN code",
+                "status": "valid",
+                "message": f"Complete residential address verified with postal PIN {pin_match.group()}",
                 "normalized": val,
-                "modifier": -15.0
+                "modifier": 6.0
             }
-            
-        if not has_street:
+        elif has_pin:
             return {
                 "is_valid": True,
-                "status": "warning",
-                "message": "Address lacks specific street or premise identifier",
+                "status": "valid",
+                "message": f"Residential location verified with postal PIN {pin_match.group()}",
                 "normalized": val,
-                "modifier": -10.0
+                "modifier": 4.0
             }
-            
-        return {
-            "is_valid": True,
-            "status": "valid",
-            "message": f"Complete residential address verified with postal PIN {pin_match.group()}",
-            "normalized": val,
-            "modifier": 6.0
-        }
+        else:
+            return {
+                "is_valid": True,
+                "status": "valid",
+                "message": "Residential city or locality captured",
+                "normalized": val,
+                "modifier": 2.0
+            }
 
     @staticmethod
     def validate_account(value: str) -> Dict[str, Any]:

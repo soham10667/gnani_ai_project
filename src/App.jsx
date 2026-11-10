@@ -6,7 +6,7 @@ import {
   History, LayoutDashboard, Radio, Play, Pause, RotateCcw, Check, X,
   Sliders, Bell, Download, ExternalLink, HelpCircle, Sparkles, Building,
   Layers, Lock, Eye, AlertCircle, Info, ChevronDown, Clock, Timer, ShieldAlert,
-  Menu, ChevronUp, Zap, CheckCircle
+  Menu, ChevronUp, Zap, CheckCircle, LogOut, Home
 } from 'lucide-react';
 import {
   AreaChart, Area, BarChart, Bar, LineChart, Line, PieChart, Pie, Cell,
@@ -18,11 +18,20 @@ import {
   fetchSessions,
   fetchSessionDetails,
   transcribeAudioBlob,
+  transcribeSampleAudioAPI,
+  processDialogueAPI,
+  fetchVoiceStatusAPI,
+  synthesizeSpeechAPI,
+  getTTSAudioUrl,
   extractEntitiesFromText,
   confirmEntityAPI,
   correctEntityAPI,
-  downloadComplianceCSVUrl
+  downloadComplianceCSVUrl,
+  fetchCurrentUser
 } from './api';
+import LandingPage from './components/LandingPage';
+import LoginPage from './components/LoginPage';
+import RegisterPage from './components/RegisterPage';
 
 // --- PHONETIC ALPHABET DICTIONARY ---
 const NATO_PHONETIC = {
@@ -58,72 +67,72 @@ const INITIAL_ENTITIES = [
   {
     id: 'name',
     label: 'Full Name',
-    value: 'Rahul Sharma',
+    value: '',
     type: 'alpha',
-    confidence: 98,
-    status: 'verified',
-    history: ['Rahul Sharma'],
-    phoneticSummary: 'R-Romeo, A-Alpha, H-Hotel, U-Uniform, L-Lima ...',
+    confidence: 0,
+    status: 'waiting', // 'waiting', 'pending', 'verified', 'corrected', 'flagged'
+    history: [],
+    phoneticSummary: 'Waiting for vocal input...',
     icon: User,
-    verifiedAt: '10:42 AM'
+    verifiedAt: null
   },
   {
     id: 'phone',
     label: 'Phone Number',
-    value: '9876543210',
+    value: '',
     type: 'numeric',
-    confidence: 92,
-    status: 'verified',
-    history: ['9876543210'],
-    phoneticSummary: '9-8-7-6-5-4-3-2-1-0 (Individual Digits)',
+    confidence: 0,
+    status: 'waiting',
+    history: [],
+    phoneticSummary: 'Waiting for vocal input...',
     icon: Phone,
-    verifiedAt: '10:43 AM'
+    verifiedAt: null
   },
   {
     id: 'address',
     label: 'Residential Address',
-    value: '24 MG Road, Pune, 411001',
+    value: '',
     type: 'address',
-    confidence: 76,
-    status: 'pending',
-    history: ['24 MG Road, Pune, 411001'],
-    phoneticSummary: 'Flat 24, M-G Road, Pune, Pin 4-1-1-0-0-1',
+    confidence: 0,
+    status: 'waiting',
+    history: [],
+    phoneticSummary: 'Waiting for vocal input...',
     icon: MapPin,
     verifiedAt: null
   },
   {
     id: 'account',
     label: 'Account Number',
-    value: '123456789012',
+    value: '',
     type: 'numeric',
-    confidence: 65,
-    status: 'flagged',
-    history: ['123456789012'],
-    phoneticSummary: '1-2-3-4-5-6-7-8-9-0-1-2',
+    confidence: 0,
+    status: 'waiting',
+    history: [],
+    phoneticSummary: 'Waiting for vocal input...',
     icon: CreditCard,
     verifiedAt: null
   },
   {
     id: 'dob',
     label: 'Date of Birth',
-    value: '15/08/2002',
+    value: '',
     type: 'date',
-    confidence: 99,
-    status: 'verified',
-    history: ['15/08/2002'],
-    phoneticSummary: '15th August, Year Two Thousand Two',
+    confidence: 0,
+    status: 'waiting',
+    history: [],
+    phoneticSummary: 'Waiting for vocal input...',
     icon: Calendar,
-    verifiedAt: '10:41 AM'
+    verifiedAt: null
   },
   {
     id: 'id_doc',
     label: 'National ID / PAN',
-    value: 'ABCDE1234F',
+    value: '',
     type: 'alphanumeric',
-    confidence: 84,
-    status: 'pending',
-    history: ['ABCDE1234F'],
-    phoneticSummary: 'A-Alpha, B-Bravo, C-Charlie, D-Delta, E-Echo ...',
+    confidence: 0,
+    status: 'waiting',
+    history: [],
+    phoneticSummary: 'Waiting for vocal input...',
     icon: FileText,
     verifiedAt: null
   }
@@ -197,15 +206,15 @@ const HISTORICAL_SESSIONS = [
   }
 ];
 
-// Modern EchoTrust Brand Logo Component (Resonant Sound-Wave & Trust Shield)
+// Modern EchoTrust Brand Logo Component (Resonant Sound-Wave & Trust Shield - Emerald Edition)
 function EchoTrustLogo({ className = "w-6 h-6" }) {
   return (
     <svg className={className} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
       <defs>
         <linearGradient id="echoTrustGrad" x1="2" y1="2" x2="22" y2="22" gradientUnits="userSpaceOnUse">
-          <stop stopColor="#38BDF8" />
-          <stop offset="0.5" stopColor="#3B82F6" />
-          <stop offset="1" stopColor="#6366F1" />
+          <stop stopColor="#34D399" />
+          <stop offset="0.5" stopColor="#10B981" />
+          <stop offset="1" stopColor="#059669" />
         </linearGradient>
       </defs>
       {/* Outer Protective Trust Shield */}
@@ -216,40 +225,44 @@ function EchoTrustLogo({ className = "w-6 h-6" }) {
         strokeLinecap="round" 
         strokeLinejoin="round" 
         fill="url(#echoTrustGrad)" 
-        fillOpacity="0.14" 
+        fillOpacity="0.18" 
       />
       {/* Resonant Acoustic Waveform Bars */}
-      <rect x="7" y="10.5" width="1.5" height="3" rx="0.75" fill="#38BDF8" />
-      <rect x="9.5" y="8" width="1.5" height="8" rx="0.75" fill="#60A5FA" />
+      <rect x="7" y="10.5" width="1.5" height="3" rx="0.75" fill="#34D399" />
+      <rect x="9.5" y="8" width="1.5" height="8" rx="0.75" fill="#6EE7B7" />
       <rect x="12" y="6" width="1.5" height="12" rx="0.75" fill="#FFFFFF" />
-      <rect x="14.5" y="8" width="1.5" height="8" rx="0.75" fill="#818CF8" />
-      <rect x="17" y="10.5" width="1.5" height="3" rx="0.75" fill="#A78BFA" />
+      <rect x="14.5" y="8" width="1.5" height="8" rx="0.75" fill="#10B981" />
+      <rect x="17" y="10.5" width="1.5" height="3" rx="0.75" fill="#059669" />
     </svg>
   );
 }
 
-export default function EchoTrustApp() {
+function EchoTrustDashboard({ user, onLogout, onGoHome }) {
   // Navigation State - Defaults to Analytics as requested in the redesign prompt!
   const [activeTab, setActiveTab] = useState('analytics'); // 'analytics', 'dashboard', 'live', 'entities', 'history', 'settings', 'audit_logs'
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [dateFilter, setDateFilter] = useState('Last 30 Days');
   
-  // Live Verification Session State
-  const [currentSessionId, setCurrentSessionId] = useState('SES-94812');
-  const [customerName, setCustomerName] = useState('Rahul Sharma');
-  const [customerId, setCustomerId] = useState('CUST-8021');
-  const [appNo, setAppNo] = useState('LOAN-2025-881');
+  // Live Verification Session State (starts empty, populated only from real sessions)
+  const [currentSessionId, setCurrentSessionId] = useState('');
+  const [customerName, setCustomerName] = useState('');
+  const [customerId, setCustomerId] = useState('');
+  const [appNo, setAppNo] = useState('');
   const [isRecording, setIsRecording] = useState(false);
   const [isProcessingAudio, setIsProcessingAudio] = useState(false);
-  const [callDuration, setCallDuration] = useState(132); // seconds
+  const [callDuration, setCallDuration] = useState(0); // starts at 00:00
   const [isPlayingAudio, setIsPlayingAudio] = useState(false);
-  const [activeEntityIndex, setActiveEntityIndex] = useState(0);
+  const [activeEntityIndex, setActiveEntityIndex] = useState(null); // null until an entity is being verified
   const [entities, setEntities] = useState(INITIAL_ENTITIES);
   const [isCorrecting, setIsCorrecting] = useState(false);
   const [correctionTarget, setCorrectionTarget] = useState(null);
   const [correctionInput, setCorrectionInput] = useState('');
   const [audioFeedbackNotice, setAudioFeedbackNotice] = useState('');
-  const [sttEngineStatus, setSttEngineStatus] = useState('EchoTrust-BFSI-v4.2');
+  const [selectedSttLanguage, setSelectedSttLanguage] = useState('hi-IN'); // 'hi-IN' (Hindi/Hinglish) or 'en-IN' (English/Hinglish)
+  const [sttEngineStatus, setSttEngineStatus] = useState('Gnani Prisma-v3.0 (hi-IN)');
+  const [selectedTtsVoice, setSelectedTtsVoice] = useState('Shivani'); // Reference audio tone match (Shivani Indian Female Tone)
+  const [selectedTtsModel, setSelectedTtsModel] = useState('timbre-v3.0');
+  const [voiceApiStatus, setVoiceApiStatus] = useState(null);
 
   // Real-time audio waveform visualizer bars (22 frequency slots)
   const [audioWaveformHeights, setAudioWaveformHeights] = useState(
@@ -263,6 +276,17 @@ export default function EchoTrustApp() {
   const analyserRef = useRef(null);
   const animationFrameRef = useRef(null);
   const streamRef = useRef(null);
+  const activeAudioRef = useRef(null);
+  const audioAnimationIntervalRef = useRef(null);
+  const currentPlaybackIdRef = useRef(0); // Sequence token to guarantee strict single-audio stream and zero overlaps
+
+  // Full Automation (Autonomous Voice Loop) State & Refs
+  const [isAutonomousMode, setIsAutonomousMode] = useState(true);
+  const isAutonomousModeRef = useRef(true);
+  const isRecordingRef = useRef(false);
+  const isProcessingAudioRef = useRef(false);
+  const hasSpokenInTurnRef = useRef(false);
+  const lastSpokenTimeRef = useRef(null);
 
   // Settings state
   const [phoneticStandard, setPhoneticStandard] = useState('nato');
@@ -279,60 +303,30 @@ export default function EchoTrustApp() {
   const [historyChannelFilter, setHistoryChannelFilter] = useState('All Channels');
   const [analyticsData, setAnalyticsData] = useState(null);
 
-  // Real-time dialogue log
-  const [dialogue, setDialogue] = useState([
-    {
-      id: 1,
-      sender: 'ai',
-      text: 'Hello, welcome to Apex Bank secure verification powered by EchoTrust. Please state your full name to get started.',
-      time: '10:40:12'
-    },
-    {
-      id: 2,
-      sender: 'user',
-      text: 'My name is Rahul Sharma.',
-      time: '10:40:19'
-    },
-    {
-      id: 3,
-      sender: 'ai',
-      text: 'I captured your name as Rahul Sharma. Let me confirm the spelling: R as in Romeo, A as in Alpha, H as in Hotel, U as in Uniform, L as in Lima. Is this correct?',
-      phonetic: true,
-      time: '10:40:27'
-    },
-    {
-      id: 4,
-      sender: 'user',
-      text: 'Yes, that is correct.',
-      time: '10:40:33'
-    },
-    {
-      id: 5,
-      sender: 'ai',
-      text: 'Great. Now please provide your residential address for policy dispatch.',
-      time: '10:40:39'
-    },
-    {
-      id: 6,
-      sender: 'user',
-      text: 'It is 24 MG Road, Pune, 411001.',
-      time: '10:40:48'
-    },
-    {
-      id: 7,
-      sender: 'ai',
-      text: 'I parsed: House 2-4, Street M-G Road, City Pune, PIN 4-1-1-0-0-1. Is this exact?',
-      phonetic: true,
-      time: '10:40:55'
-    }
-  ]);
+  // Real-time dialogue log (starts empty, only displays real speech / typed input)
+  const [dialogue, setDialogue] = useState([]);
 
   // Load live data from Backend API on mount & tab changes
   useEffect(() => {
     loadDashboardData();
     loadAnalyticsData();
     loadSessionsList();
+    loadVoiceStatus();
   }, []);
+
+  const loadVoiceStatus = async () => {
+    try {
+      const status = await fetchVoiceStatusAPI();
+      if (status) {
+        setVoiceApiStatus(status);
+        if (status.tts && status.tts.voice) {
+          setSelectedTtsVoice(status.tts.voice);
+        }
+      }
+    } catch (e) {
+      console.warn('Voice status check:', e);
+    }
+  };
 
   useEffect(() => {
     if (activeTab === 'dashboard') {
@@ -452,16 +446,26 @@ export default function EchoTrustApp() {
     }));
   };
 
-  // Audio timer ticker
+  const ensureSessionActive = () => {
+    if (currentSessionId) return currentSessionId;
+    const randomNum = Math.floor(10000 + Math.random() * 90000);
+    const newSessId = `SES-${randomNum}`;
+    setCurrentSessionId(newSessId);
+    setCustomerId(`CUST-${Math.floor(1000 + Math.random() * 9000)}`);
+    setAppNo(`LOAN-${new Date().getFullYear()}-${Math.floor(100 + Math.random() * 900)}`);
+    return newSessId;
+  };
+
+  // Live session timer ticker (counts only once a session has started or while recording)
   useEffect(() => {
     let interval;
-    if (isRecording) {
+    if (currentSessionId || isRecording) {
       interval = setInterval(() => {
         setCallDuration(prev => prev + 1);
       }, 1000);
     }
     return () => clearInterval(interval);
-  }, [isRecording]);
+  }, [currentSessionId, isRecording]);
 
   const formatDuration = (secs) => {
     const mins = Math.floor(secs / 60);
@@ -469,36 +473,319 @@ export default function EchoTrustApp() {
     return `${mins.toString().padStart(2, '0')}:${remSecs.toString().padStart(2, '0')}`;
   };
 
-  // Text-to-Speech Readback implementation
-  const speakReadBack = (text, customSpelling = null) => {
-    if (!('speechSynthesis' in window)) {
-      setAudioFeedbackNotice('Text-to-Speech not supported on this browser.');
-      return;
+  const interruptAudioPlayback = () => {
+    // Invalidate any in-flight or ongoing TTS playback requests immediately
+    currentPlaybackIdRef.current += 1;
+    if (activeAudioRef.current) {
+      try {
+        activeAudioRef.current.pause();
+        activeAudioRef.current.currentTime = 0;
+        activeAudioRef.current.src = "";
+        activeAudioRef.current.onplay = null;
+        activeAudioRef.current.onended = null;
+        activeAudioRef.current.onerror = null;
+      } catch (e) {}
+      activeAudioRef.current = null;
     }
-    window.speechSynthesis.cancel();
-    
-    let speechContent = text;
-    if (customSpelling) {
-      speechContent = customSpelling;
+    if (audioAnimationIntervalRef.current) {
+      clearInterval(audioAnimationIntervalRef.current);
+      audioAnimationIntervalRef.current = null;
     }
-    
-    const utterance = new SpeechSynthesisUtterance(speechContent);
-    utterance.rate = 0.95;
-    utterance.pitch = 1.0;
-    utterance.onstart = () => {
-      setIsPlayingAudio(true);
-      setAudioFeedbackNotice(`AI Synthesizing: "${speechContent.slice(0, 55)}..."`);
+    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+      try { window.speechSynthesis.cancel(); } catch (e) {}
+    }
+    setIsPlayingAudio(false);
+    setAudioFeedbackNotice('');
+    setAudioWaveformHeights([35, 60, 20, 85, 95, 45, 100, 70, 40, 90, 65, 30, 80, 50, 25, 90, 40, 75, 30, 60, 85, 20]);
+  };
+
+  // Text-to-Speech Readback implementation using Official Gnani Timbre v3.0 (Shivani female voice matching reference audio)
+  const speakReadBack = async (text, customSpelling = null) => {
+    let speechContent = customSpelling || text;
+    if (!speechContent || !speechContent.trim()) return;
+
+    // Interrupt any ongoing audio and capture unique sequence token for this request
+    interruptAudioPlayback();
+    const myPlaybackId = currentPlaybackIdRef.current;
+
+    setIsPlayingAudio(true);
+    setAudioFeedbackNotice(`Gnani Timbre v3.0 (${selectedTtsVoice}): Synthesizing...`);
+
+    // Helper to animate visualizer bars during audio playback
+    const startWaveformAnimation = () => {
+      if (audioAnimationIntervalRef.current) clearInterval(audioAnimationIntervalRef.current);
+      audioAnimationIntervalRef.current = setInterval(() => {
+        setAudioWaveformHeights(prev =>
+          prev.map(() => Math.floor(Math.random() * 75) + 25)
+        );
+      }, 90);
     };
-    utterance.onend = () => {
-      setIsPlayingAudio(false);
-      setAudioFeedbackNotice('');
-    };
-    utterance.onerror = () => {
+
+    const stopWaveformAnimation = () => {
+      if (audioAnimationIntervalRef.current) {
+        clearInterval(audioAnimationIntervalRef.current);
+        audioAnimationIntervalRef.current = null;
+      }
+      setAudioWaveformHeights([35, 60, 20, 85, 95, 45, 100, 70, 40, 90, 65, 30, 80, 50, 25, 90, 40, 75, 30, 60, 85, 20]);
       setIsPlayingAudio(false);
       setAudioFeedbackNotice('');
     };
 
-    window.speechSynthesis.speak(utterance);
+    try {
+      // Synthesize using official Gnani Timbre v3.0 API with selected Indian voice (default Shivani female tone)
+      const audioUrl = await synthesizeSpeechAPI(speechContent, {
+        voice: selectedTtsVoice,
+        model: selectedTtsModel || 'timbre-v3.0',
+        speed: 1.0
+      });
+
+      // Strict single-audio check: if interrupted or superseded during network fetch, discard immediately
+      if (myPlaybackId !== currentPlaybackIdRef.current) {
+        if (audioUrl) {
+          try { URL.revokeObjectURL(audioUrl); } catch (e) {}
+        }
+        return;
+      }
+
+      // Ensure any previously active audio element is paused
+      if (activeAudioRef.current) {
+        try {
+          activeAudioRef.current.pause();
+          activeAudioRef.current.src = "";
+        } catch (e) {}
+        activeAudioRef.current = null;
+      }
+
+      const audio = new Audio(audioUrl);
+      activeAudioRef.current = audio;
+
+      audio.onplay = () => {
+        if (myPlaybackId !== currentPlaybackIdRef.current) {
+          try {
+            audio.pause();
+            audio.src = "";
+          } catch (e) {}
+          return;
+        }
+        setIsPlayingAudio(true);
+        startWaveformAnimation();
+        setAudioFeedbackNotice(`Gnani Timbre v3.0 (${selectedTtsVoice} - Indian Female Tone): "${speechContent.slice(0, 50)}..."`);
+      };
+
+      audio.onended = () => {
+        if (myPlaybackId === currentPlaybackIdRef.current) {
+          stopWaveformAnimation();
+          activeAudioRef.current = null;
+          // Full Automation: Hands-free listening for customer's response
+          if (isAutonomousModeRef.current) {
+            setAudioFeedbackNotice('EchoTrust AI is listening... Speak into microphone.');
+            setTimeout(() => {
+              if (isAutonomousModeRef.current && !isRecordingRef.current && !isProcessingAudioRef.current && !activeAudioRef.current) {
+                startMicrophoneCapture();
+              }
+            }, 500);
+          }
+        }
+        try { URL.revokeObjectURL(audioUrl); } catch (e) {}
+      };
+
+      audio.onerror = (e) => {
+        console.warn('Gnani TTS playback error:', e);
+        if (myPlaybackId === currentPlaybackIdRef.current) {
+          stopWaveformAnimation();
+          activeAudioRef.current = null;
+        }
+        try { URL.revokeObjectURL(audioUrl); } catch (err) {}
+      };
+
+      await audio.play();
+    } catch (apiErr) {
+      if (apiErr && (apiErr.name === 'AbortError' || apiErr.message?.includes('interrupted') || apiErr.message?.includes('abort'))) {
+        return; // Normal interruption, ignore cleanly
+      }
+      console.warn('Gnani TTS API call error:', apiErr);
+      if (myPlaybackId === currentPlaybackIdRef.current) {
+        stopWaveformAnimation();
+        setAudioFeedbackNotice('Gnani TTS audio synthesis unavailable.');
+      }
+    }
+  };
+
+  // Full Automation: Start KYC call with opening reference audio (Shivani tone) and auto-listen loop
+  const handleStartAutomatedSession = async () => {
+    const activeSess = ensureSessionActive();
+    setIsAutonomousMode(true);
+    isAutonomousModeRef.current = true;
+    hasSpokenInTurnRef.current = false;
+    lastSpokenTimeRef.current = null;
+
+    // Interrupt any ongoing audio
+    interruptAudioPlayback();
+    const myPlaybackId = currentPlaybackIdRef.current;
+
+    const openingGreeting = "नमस्ते, कैसे हैं आप? मैं EchoTrust AI assistant हूँ, मैं आपकी details verify करने में help करूँगी। सबसे पहले, क्या मैं आपका नाम confirm कर सकती हूँ?";
+
+    const timeNow = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    setDialogue([
+      {
+        id: Date.now(),
+        sender: 'ai',
+        text: openingGreeting,
+        phonetic: false,
+        time: timeNow
+      }
+    ]);
+
+    setIsPlayingAudio(true);
+    setAudioFeedbackNotice('EchoTrust AI (Shivani): Initiating verification call...');
+
+    // Animate visualizer bars
+    if (audioAnimationIntervalRef.current) clearInterval(audioAnimationIntervalRef.current);
+    audioAnimationIntervalRef.current = setInterval(() => {
+      setAudioWaveformHeights(prev =>
+        prev.map(() => Math.floor(Math.random() * 75) + 25)
+      );
+    }, 90);
+
+    try {
+      const audio = new Audio('/generated-audio.wav');
+      activeAudioRef.current = audio;
+
+      audio.onplay = () => {
+        if (myPlaybackId !== currentPlaybackIdRef.current) {
+          try { audio.pause(); audio.src = ""; } catch (e) {}
+          return;
+        }
+        setIsPlayingAudio(true);
+      };
+
+      audio.onended = () => {
+        if (myPlaybackId === currentPlaybackIdRef.current) {
+          if (audioAnimationIntervalRef.current) {
+            clearInterval(audioAnimationIntervalRef.current);
+            audioAnimationIntervalRef.current = null;
+          }
+          setIsPlayingAudio(false);
+          activeAudioRef.current = null;
+          setAudioFeedbackNotice('EchoTrust AI is listening... Speak your full name.');
+
+          // Full Automation: Automatically start microphone to capture customer's answer!
+          if (isAutonomousModeRef.current) {
+            setTimeout(() => {
+              if (isAutonomousModeRef.current && !isRecordingRef.current && !isProcessingAudioRef.current && !activeAudioRef.current) {
+                startMicrophoneCapture();
+              }
+            }, 400);
+          }
+        }
+      };
+
+      audio.onerror = () => {
+        if (myPlaybackId === currentPlaybackIdRef.current) {
+          if (audioAnimationIntervalRef.current) {
+            clearInterval(audioAnimationIntervalRef.current);
+            audioAnimationIntervalRef.current = null;
+          }
+          setIsPlayingAudio(false);
+          activeAudioRef.current = null;
+          if (isAutonomousModeRef.current) {
+            setTimeout(() => {
+              startMicrophoneCapture();
+            }, 400);
+          }
+        }
+      };
+
+      await audio.play();
+    } catch (e) {
+      console.warn('Autoplay notice:', e);
+      setIsPlayingAudio(false);
+      setAudioFeedbackNotice('EchoTrust AI ready. Click "Start Voice Capture" or speak into microphone.');
+    }
+  };
+
+  // Play and Transcribe generated-audio.wav with Gnani STT
+  const handleProcessSampleAudio = async () => {
+    if (isProcessingAudio) {
+      setAudioFeedbackNotice('Please wait for current speech processing to complete...');
+      return;
+    }
+    const activeSess = ensureSessionActive();
+    setIsProcessingAudio(true);
+    setAudioFeedbackNotice(`Transcribing generated-audio.wav with Official Gnani STT (${selectedSttLanguage})...`);
+
+    // Interrupt any previous playback and get token for sample audio
+    interruptAudioPlayback();
+    const myPlaybackId = currentPlaybackIdRef.current;
+
+    try {
+      const audio = new Audio('/generated-audio.wav');
+      activeAudioRef.current = audio;
+      audio.onplay = () => {
+        if (myPlaybackId !== currentPlaybackIdRef.current) {
+          try { audio.pause(); audio.src = ""; } catch (e) {}
+          return;
+        }
+        setIsPlayingAudio(true);
+      };
+      audio.onended = () => {
+        if (myPlaybackId === currentPlaybackIdRef.current) {
+          setIsPlayingAudio(false);
+          activeAudioRef.current = null;
+        }
+      };
+      audio.onerror = () => {
+        if (myPlaybackId === currentPlaybackIdRef.current) {
+          setIsPlayingAudio(false);
+          activeAudioRef.current = null;
+        }
+      };
+      audio.play().catch(e => {
+        if (e.name !== 'AbortError') console.warn('Audio play notice:', e);
+      });
+    } catch (e) {
+      console.warn('Audio play notice:', e);
+    }
+
+    try {
+      const targetId = isCorrecting && correctionTarget ? correctionTarget.id : null;
+      const res = await transcribeSampleAudioAPI(activeSess, targetId);
+
+      if (res && res.transcript) {
+        const transcript = res.transcript;
+        const conf = res.confidence || 94.5;
+        setSttEngineStatus(res.stt_engine || 'Gnani Prisma-v3.0 (indic-auto)');
+
+        const timeNow = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+        setDialogue(prev => [
+          ...prev,
+          {
+            id: Date.now(),
+            sender: 'user',
+            text: `[Reference Audio: generated-audio.wav] ${transcript}`,
+            time: timeNow
+          },
+          {
+            id: Date.now() + 1,
+            sender: 'ai',
+            text: res.ai_response_text || `Acoustic stream successfully verified via Official Gnani STT (${res.stt_engine || 'prisma-v3.0'} - ${conf}% confidence). Active voice calibrated to Shivani (Timbre v3.0 Female Tone).`,
+            time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+          }
+        ]);
+
+        if (res.extracted_entities && res.extracted_entities.length > 0) {
+          applyExtractedEntities(res.extracted_entities, transcript, conf, false);
+        }
+
+        setAudioFeedbackNotice(`Transcribed successfully via Official Gnani STT (${conf}% confidence)`);
+      }
+    } catch (err) {
+      console.error('Sample audio processing error:', err);
+      setAudioFeedbackNotice('Failed to process generated-audio.wav with Gnani STT API.');
+    } finally {
+      setIsProcessingAudio(false);
+      isProcessingAudioRef.current = false;
+    }
   };
 
   // Convert browser-recorded audio blob (e.g. WebM/OGG) to clean 16kHz mono 16-bit PCM WAV for EchoTrust STT
@@ -522,6 +809,15 @@ export default function EchoTrustApp() {
       const renderedBuffer = await offlineCtx.startRendering();
       
       const channelData = renderedBuffer.getChannelData(0);
+      
+      // Calculate Peak Amplitude for dynamic gain normalization (boosts quiet voice, avoids clipping)
+      let maxPeak = 0;
+      for (let i = 0; i < channelData.length; i++) {
+        const absVal = Math.abs(channelData[i]);
+        if (absVal > maxPeak) maxPeak = absVal;
+      }
+      const gainMultiplier = maxPeak > 0.02 ? Math.min(3.5, 0.92 / maxPeak) : 1.0;
+
       const wavBuffer = new ArrayBuffer(44 + channelData.length * 2);
       const view = new DataView(wavBuffer);
       
@@ -547,7 +843,7 @@ export default function EchoTrustApp() {
       
       let offset = 44;
       for (let i = 0; i < channelData.length; i++, offset += 2) {
-        const s = Math.max(-1, Math.min(1, channelData[i]));
+        const s = Math.max(-1, Math.min(1, channelData[i] * gainMultiplier));
         view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
       }
       await ctx.close().catch(() => {});
@@ -561,13 +857,22 @@ export default function EchoTrustApp() {
   // Real-time microphone audio capture with Web Audio API & Analyser
   const startMicrophoneCapture = async () => {
     try {
+      ensureSessionActive();
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
         setAudioFeedbackNotice('Microphone access is not supported by your browser.');
         return;
       }
 
-      setAudioFeedbackNotice('Requesting microphone permission...');
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      setAudioFeedbackNotice('Requesting high-fidelity microphone with active noise suppression...');
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+          channelCount: 1,
+          sampleRate: 16000
+        }
+      });
       streamRef.current = stream;
 
       const AudioCtx = window.AudioContext || window.webkitAudioContext;
@@ -585,14 +890,33 @@ export default function EchoTrustApp() {
       const updateWaveform = () => {
         if (analyserRef.current) {
           analyserRef.current.getByteFrequencyData(dataArray);
+          let sum = 0;
           const newHeights = [];
           for (let i = 0; i < 22; i++) {
             const index = Math.floor((i / 22) * bufferLength);
             const val = dataArray[index] || 15;
+            sum += val;
             const percentage = Math.max(15, Math.min(100, Math.round((val / 255) * 100)));
             newHeights.push(percentage);
           }
           setAudioWaveformHeights(newHeights);
+
+          // Full Automation VAD: Compute average volume level
+          const avgVolume = sum / 22;
+          const now = Date.now();
+          if (avgVolume > 20) {
+            hasSpokenInTurnRef.current = true;
+            lastSpokenTimeRef.current = now;
+          } else if (hasSpokenInTurnRef.current && lastSpokenTimeRef.current) {
+            const silenceMs = now - lastSpokenTimeRef.current;
+            if (isAutonomousModeRef.current && silenceMs > 1300) {
+              hasSpokenInTurnRef.current = false;
+              lastSpokenTimeRef.current = null;
+              stopMicrophoneCapture();
+              return;
+            }
+          }
+
           animationFrameRef.current = requestAnimationFrame(updateWaveform);
         }
       };
@@ -616,17 +940,24 @@ export default function EchoTrustApp() {
 
       mediaRecorder.start();
       setIsRecording(true);
+      isRecordingRef.current = true;
+      hasSpokenInTurnRef.current = false;
+      lastSpokenTimeRef.current = null;
       setAudioFeedbackNotice('Listening in real time... Speak into your microphone (e.g. name, phone, PAN, address)');
     } catch (err) {
       console.error('Microphone access denied:', err);
       setIsRecording(false);
+      isRecordingRef.current = false;
       setAudioFeedbackNotice(`Microphone access error: ${err.message || 'Permission denied'}. You can also type speech input below.`);
     }
   };
 
   const stopMicrophoneCapture = () => {
+    isRecordingRef.current = false;
     if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
-      mediaRecorderRef.current.stop();
+      try {
+        mediaRecorderRef.current.stop();
+      } catch (e) {}
     }
     if (streamRef.current) {
       streamRef.current.getTracks().forEach(track => track.stop());
@@ -641,25 +972,52 @@ export default function EchoTrustApp() {
   };
 
   const handleToggleRecording = () => {
+    if (isProcessingAudio) {
+      setAudioFeedbackNotice('Gnani STT is actively transcribing previous audio. Please wait a moment...');
+      return;
+    }
     if (isRecording) {
       stopMicrophoneCapture();
     } else {
+      // Interrupt any playing audio before recording
+      interruptAudioPlayback();
       startMicrophoneCapture();
     }
   };
 
   const handleAudioCaptured = async (audioBlob) => {
+    if (!audioBlob || audioBlob.size < 200) {
+      setAudioFeedbackNotice('Vocal audio was too brief. Please speak clearly into your microphone.');
+      setIsProcessingAudio(false);
+      isProcessingAudioRef.current = false;
+      if (isAutonomousModeRef.current) {
+        setTimeout(() => {
+          if (isAutonomousModeRef.current && !isRecordingRef.current && !activeAudioRef.current) {
+            startMicrophoneCapture();
+          }
+        }, 1200);
+      }
+      return;
+    }
+
+    const activeSess = ensureSessionActive();
     setIsProcessingAudio(true);
-    setAudioFeedbackNotice('Transcribing audio stream with EchoTrust STT engine...');
+    isProcessingAudioRef.current = true;
+    setAudioFeedbackNotice(`Transcribing with Official Gnani STT (Prisma-v3.0 ${selectedSttLanguage})...`);
 
     try {
       const targetId = isCorrecting && correctionTarget ? correctionTarget.id : null;
-      const res = await transcribeAudioBlob(audioBlob, currentSessionId, targetId);
+      const res = await transcribeAudioBlob(audioBlob, activeSess, targetId, selectedSttLanguage);
       
+      if (res && res.status === 'error') {
+        setAudioFeedbackNotice(res.error || 'Gnani STT busy. Please wait a moment and try speaking again.');
+        return;
+      }
+
       if (res && res.transcript) {
         const transcript = res.transcript;
-        const conf = res.confidence || 92;
-        setSttEngineStatus(res.stt_engine || 'EchoTrust-BFSI-v4.2');
+        const conf = res.confidence || 94.5;
+        setSttEngineStatus(res.stt_engine || `Gnani Prisma-v3.0 (${selectedSttLanguage})`);
 
         const timeNow = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
         setDialogue(prev => [
@@ -673,25 +1031,37 @@ export default function EchoTrustApp() {
         ]);
 
         if (res.extracted_entities && res.extracted_entities.length > 0) {
-          applyExtractedEntities(res.extracted_entities, transcript, conf);
-        } else {
-          const extractRes = await extractEntitiesFromText(transcript, currentSessionId, conf, targetId);
-          if (extractRes && extractRes.entities && extractRes.entities.length > 0) {
-            applyExtractedEntities(extractRes.entities, transcript, conf);
-          } else {
-            setAudioFeedbackNotice(`Transcribed: "${transcript.slice(0, 50)}..."`);
-          }
+          applyExtractedEntities(res.extracted_entities, transcript, conf, false);
         }
+
+        if (res.ai_response_text) {
+          setDialogue(prev => [
+            ...prev,
+            {
+              id: Date.now() + 1,
+              sender: 'ai',
+              text: res.ai_response_text,
+              phonetic: res.action === 'entity_captured',
+              time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+            }
+          ]);
+          speakReadBack(res.ai_response_text);
+        }
+
+        setAudioFeedbackNotice(`Transcribed via Gnani STT (${conf}% confidence)`);
+      } else if (res && res.error) {
+        setAudioFeedbackNotice(`Gnani STT error: ${res.error}`);
       }
     } catch (err) {
       console.error('Audio processing error:', err);
-      setAudioFeedbackNotice('Speech-to-Text completed. You can verify the prompt in the dialogue.');
+      setAudioFeedbackNotice(`Audio processing error: ${err.message || 'Check microphone or API'}`);
     } finally {
       setIsProcessingAudio(false);
+      isProcessingAudioRef.current = false;
     }
   };
 
-  const applyExtractedEntities = (extractedList, rawTranscript, acousticConf) => {
+  const applyExtractedEntities = (extractedList, rawTranscript, acousticConf, shouldSpeak = true) => {
     let targetEntity = null;
 
     setEntities(prevEntities => {
@@ -707,17 +1077,22 @@ export default function EchoTrustApp() {
             phoneticSummary: ext.phoneticSummary,
             history: [...(updated[idx].history || []), ext.value]
           };
-          targetEntity = updated[idx];
-          setActiveEntityIndex(idx);
+          if (!targetEntity) {
+            targetEntity = updated[idx];
+            setActiveEntityIndex(idx);
+          }
+        }
+        if (ext.id === 'name' && ext.value) {
+          setCustomerName(ext.value);
         }
       });
       return updated;
     });
 
-    if (targetEntity) {
+    if (targetEntity && shouldSpeak) {
       const phonetics = getPhoneticSpelling(targetEntity.value);
       const spelledOut = phonetics.map(p => `${p.char} as in ${p.code}`).join(', ');
-      const aiPromptText = `I captured your ${targetEntity.label} as "${targetEntity.value}". Let me confirm the spelling: ${spelledOut}. Is this correct?`;
+      const aiPromptText = `Maine aapka ${targetEntity.label} note kiya hai: "${targetEntity.value}". Spelling verify kar lijiye: ${spelledOut}. Kya ye sahi hai?`;
 
       setDialogue(prev => [
         ...prev,
@@ -737,6 +1112,10 @@ export default function EchoTrustApp() {
   const handleSimulatedSpeechInput = async (inputText) => {
     if (!inputText || !inputText.trim()) return;
 
+    // Interrupt any playing audio before submitting
+    interruptAudioPlayback();
+    const activeSess = ensureSessionActive();
+
     const timeNow = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
     setDialogue(prev => [
       ...prev,
@@ -749,28 +1128,35 @@ export default function EchoTrustApp() {
     ]);
 
     setIsProcessingAudio(true);
-    setAudioFeedbackNotice('Parsing customer voice input with BFSI AI Entity Extractor...');
+    setAudioFeedbackNotice('Processing speech with Gnani AI Conversational Engine...');
 
     try {
       const targetId = isCorrecting && correctionTarget ? correctionTarget.id : null;
-      const res = await extractEntitiesFromText(inputText, currentSessionId, 92.0, targetId);
-      if (res && res.entities && res.entities.length > 0) {
-        applyExtractedEntities(res.entities, inputText, 92.0);
-      } else {
+      const res = await processDialogueAPI(inputText, activeSess, targetId);
+
+      if (res && res.extracted_entities && res.extracted_entities.length > 0) {
+        applyExtractedEntities(res.extracted_entities, inputText, 95.0, false);
+      }
+
+      if (res && res.ai_response_text) {
         setDialogue(prev => [
           ...prev,
           {
             id: Date.now() + 1,
             sender: 'ai',
-            text: `Captured: "${inputText}". Let me verify that against your application records.`,
+            text: res.ai_response_text,
+            phonetic: res.action === 'entity_captured',
             time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
           }
         ]);
+        speakReadBack(res.ai_response_text);
       }
     } catch (err) {
-      console.error('Extraction error:', err);
+      console.error('Dialogue processing error:', err);
+      setAudioFeedbackNotice('Dialogue processing notice: Check backend connection.');
     } finally {
       setIsProcessingAudio(false);
+      isProcessingAudioRef.current = false;
     }
   };
 
@@ -924,7 +1310,8 @@ export default function EchoTrustApp() {
     };
   };
 
-  const currentFocusedEntity = entities[activeEntityIndex] || entities[0];
+  const currentFocusedEntity = activeEntityIndex !== null ? entities[activeEntityIndex] : null;
+  const hasActiveFocusedEntity = Boolean(currentFocusedEntity && currentFocusedEntity.value && currentFocusedEntity.value.trim().length > 0);
 
   // Navigation Items matching the redesign specification:
   const NAV_ITEMS = [
@@ -938,24 +1325,24 @@ export default function EchoTrustApp() {
   ];
 
   return (
-    <div className="min-h-screen bg-[#F0F4F8] text-slate-800 flex font-sans antialiased">
+    <div className="min-h-screen bg-[#F8FAF9] text-slate-800 flex font-sans antialiased">
       {/* =========================================================
-          SECTION 1: FIXED DARK NAVY-BLUE SIDEBAR ON THE LEFT
+          SECTION 1: FIXED CLEAN LIGHT SIDEBAR ON THE LEFT
          ========================================================= */}
-      <aside className={`fixed inset-y-0 left-0 z-50 w-64 bg-[#0A192F] text-white flex flex-col justify-between border-r border-slate-800 shadow-xl transition-transform duration-300 ease-in-out ${
+      <aside className={`fixed inset-y-0 left-0 z-50 w-64 bg-white text-slate-800 flex flex-col justify-between border-r border-slate-200 shadow-sm transition-transform duration-300 ease-in-out ${
         mobileMenuOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'
       }`}>
-        <div>
+        <div className="flex-1 overflow-y-auto">
           {/* EchoTrust Logo and Branding */}
-          <div className="p-5 border-b border-slate-800/80 flex items-center justify-between">
+          <div className="p-5 border-b border-slate-100 flex items-center justify-between">
             <div className="flex items-center space-x-3 cursor-pointer" onClick={() => { setActiveTab('analytics'); setMobileMenuOpen(false); }}>
-              <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-cyan-500 via-blue-600 to-indigo-600 flex items-center justify-center shadow-lg shadow-blue-500/25 ring-1 ring-white/10">
+              <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-emerald-500 via-teal-600 to-green-600 flex items-center justify-center shadow-lg shadow-emerald-500/25 ring-1 ring-emerald-500/20">
                 <EchoTrustLogo className="w-6 h-6 text-white" />
               </div>
               <div>
                 <div className="flex items-center space-x-2">
-                  <span className="font-extrabold text-lg tracking-tight text-white">EchoTrust</span>
-                  <span className="text-[10px] uppercase font-bold px-1.5 py-0.5 rounded bg-blue-500/25 text-blue-300 border border-blue-400/30">
+                  <span className="font-extrabold text-lg tracking-tight text-slate-900">EchoTrust</span>
+                  <span className="text-[10px] uppercase font-bold px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200">
                     AI Voice
                   </span>
                 </div>
@@ -966,7 +1353,7 @@ export default function EchoTrustApp() {
             {/* Mobile close button */}
             <button
               onClick={() => setMobileMenuOpen(false)}
-              className="lg:hidden text-slate-400 hover:text-white p-1 rounded-lg"
+              className="lg:hidden text-slate-400 hover:text-slate-600 p-1 rounded-lg"
             >
               <X className="w-5 h-5" />
             </button>
@@ -990,8 +1377,8 @@ export default function EchoTrustApp() {
                     }}
                     className={`w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl text-sm font-medium transition-all ${
                       isActive
-                        ? 'bg-blue-600 text-white font-semibold shadow-md shadow-blue-600/30'
-                        : 'text-slate-300 hover:text-white hover:bg-slate-800/70'
+                        ? 'bg-gradient-to-r from-emerald-600 via-teal-600 to-green-600 text-white font-bold shadow-md shadow-emerald-600/25'
+                        : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100/80 font-medium'
                     }`}
                   >
                     <div className="flex items-center space-x-3">
@@ -999,8 +1386,12 @@ export default function EchoTrustApp() {
                       <span>{item.label}</span>
                     </div>
                     {item.badge && (
-                      <span className="flex items-center space-x-1.5 text-[10px] font-semibold px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-400/30">
-                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping"></span>
+                      <span className={`flex items-center space-x-1.5 text-[10px] font-semibold px-2 py-0.5 rounded-full ${
+                        isActive
+                          ? 'bg-white/20 text-white border border-white/30'
+                          : 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                      }`}>
+                        <span className={`w-1.5 h-1.5 rounded-full ${isActive ? 'bg-white' : 'bg-emerald-500'} animate-ping`}></span>
                         <span>{item.badge}</span>
                       </span>
                     )}
@@ -1011,20 +1402,47 @@ export default function EchoTrustApp() {
           </div>
         </div>
 
-        {/* System Online Status Indicator at Bottom */}
-        <div className="p-4 border-t border-slate-800/80 bg-[#071324]/80">
-          <div className="flex items-center space-x-3 p-2.5 rounded-xl bg-slate-800/70 border border-slate-700/80">
-            <div className="relative flex items-center justify-center">
-              <span className="w-3 h-3 rounded-full bg-emerald-400"></span>
-              <span className="absolute w-3 h-3 rounded-full bg-emerald-400 animate-ping opacity-75"></span>
-            </div>
-            <div className="flex-1 min-w-0">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-bold text-white">System Online</span>
-                <span className="text-[10px] text-emerald-400 font-semibold">99.8%</span>
+        {/* Sidebar Pinned Footer: Home Shortcut & User Profile with Logout */}
+        <div className="p-3 border-t border-slate-100 bg-slate-50/70 space-y-2 shrink-0">
+          {/* Back to Landing Page Shortcut */}
+          {onGoHome && (
+            <button
+              onClick={onGoHome}
+              className="w-full flex items-center justify-between px-3 py-2 text-xs font-semibold text-slate-600 hover:text-slate-900 hover:bg-white rounded-xl border border-transparent hover:border-slate-200 transition cursor-pointer shadow-2xs group"
+              title="Return to Public Landing Page"
+            >
+              <div className="flex items-center space-x-2.5">
+                <Home className="w-4 h-4 text-emerald-600 group-hover:scale-105 transition-transform" />
+                <span>View Landing Page</span>
               </div>
-              <p className="text-[10px] text-slate-400 truncate mt-0.5">{sttEngineStatus} Active</p>
+              <ArrowUpRight className="w-3.5 h-3.5 text-slate-400 group-hover:text-emerald-600 transition-colors" />
+            </button>
+          )}
+
+          {/* User Profile Card with Direct Logout Button */}
+          <div className="p-2.5 rounded-2xl bg-white border border-slate-200/90 shadow-2xs flex items-center justify-between gap-2">
+            <div className="flex items-center space-x-2.5 min-w-0">
+              <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-emerald-600 via-teal-600 to-green-600 text-white flex items-center justify-center font-bold text-xs ring-2 ring-emerald-500/20 shadow-xs shrink-0">
+                {user?.name ? user.name.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase() : 'AK'}
+              </div>
+              <div className="min-w-0">
+                <div className="text-xs font-bold text-slate-900 truncate leading-tight">
+                  {user?.name || 'Ananya Kapoor'}
+                </div>
+                <div className="text-[10px] text-slate-400 truncate font-medium">
+                  {user?.role || 'Senior Verification Officer'}
+                </div>
+              </div>
             </div>
+
+            {/* Logout Button */}
+            <button
+              onClick={onLogout}
+              title="Sign Out"
+              className="p-2 text-rose-600 hover:text-rose-700 hover:bg-rose-50 rounded-xl transition cursor-pointer shrink-0 border border-transparent hover:border-rose-100"
+            >
+              <LogOut className="w-4 h-4" />
+            </button>
           </div>
         </div>
       </aside>
@@ -1075,12 +1493,21 @@ export default function EchoTrustApp() {
               </div>
             </div>
 
-            {/* Right Controls: Date Filter Dropdown, Notification Icon, User Profile */}
-            <div className="flex items-center space-x-3 sm:space-x-4 shrink-0">
+            {/* Right Controls: System Status Badge, Date Filter Dropdown, Notification Icon */}
+            <div className="flex items-center space-x-3 shrink-0">
+              {/* Active System Status Pill */}
+              <div className="hidden sm:inline-flex items-center space-x-2 px-3 py-1.5 rounded-xl bg-emerald-50 border border-emerald-200/80 text-emerald-800 text-xs font-semibold shadow-2xs">
+                <span className="relative flex h-2 w-2">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                  <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                </span>
+                <span>System Active</span>
+              </div>
+
               {/* Date Filter Dropdown */}
               <div className="relative">
                 <div className="flex items-center space-x-2 bg-slate-50 border border-slate-200 hover:border-slate-300 text-slate-700 text-xs font-semibold px-3 py-2 rounded-xl transition shadow-2xs cursor-pointer">
-                  <Calendar className="w-3.5 h-3.5 text-blue-600" />
+                  <Calendar className="w-3.5 h-3.5 text-emerald-600" />
                   <select
                     value={dateFilter}
                     onChange={(e) => setDateFilter(e.target.value)}
@@ -1096,23 +1523,12 @@ export default function EchoTrustApp() {
 
               {/* Notification Icon */}
               <button
-                className="relative p-2 rounded-xl text-slate-500 hover:text-slate-800 hover:bg-slate-100 transition border border-slate-200 shadow-2xs"
+                className="relative p-2 rounded-xl text-slate-500 hover:text-slate-800 hover:bg-slate-100 transition border border-slate-200 shadow-2xs cursor-pointer"
                 title="Notifications"
               >
                 <Bell className="w-4 h-4" />
-                <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-blue-600 ring-2 ring-white"></span>
+                <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-emerald-500 ring-2 ring-white"></span>
               </button>
-
-              {/* User Profile */}
-              <div className="flex items-center space-x-3 pl-3 border-l border-slate-200">
-                <div className="w-9 h-9 rounded-full bg-gradient-to-tr from-blue-700 to-indigo-600 text-white flex items-center justify-center font-bold text-xs ring-2 ring-blue-500/20 shadow-xs">
-                  AK
-                </div>
-                <div className="hidden md:block text-left">
-                  <div className="text-xs font-bold text-slate-900 leading-tight">Ananya Kapoor</div>
-                  <div className="text-[10px] text-slate-400 font-medium">Senior Verification Officer</div>
-                </div>
-              </div>
             </div>
           </div>
         </header>
@@ -1130,7 +1546,7 @@ export default function EchoTrustApp() {
               </div>
               <button
                 onClick={() => {
-                  window.speechSynthesis.cancel();
+                  interruptAudioPlayback();
                   setAudioFeedbackNotice('');
                 }}
                 className="text-indigo-700 hover:underline font-semibold"
@@ -1147,11 +1563,11 @@ export default function EchoTrustApp() {
             <div className="space-y-6">
               {/* --- SECTION 4: ANALYTICS KPI CARDS (4 in a single responsive row) --- */}
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
-                {/* Card 1: First Attempt Confirmation (Blue Theme) */}
-                <div className="bg-white rounded-2xl border border-slate-200/90 p-5 shadow-xs hover:shadow-md transition-all border-l-4 border-l-blue-600 relative overflow-hidden group">
+                {/* Card 1: First Attempt Confirmation (Emerald Theme) */}
+                <div className="bg-white rounded-2xl border border-slate-200/90 p-5 shadow-xs hover:shadow-md transition-all border-l-4 border-l-emerald-600 relative overflow-hidden group">
                   <div className="flex items-center justify-between">
                     <p className="text-xs font-bold uppercase tracking-wider text-slate-500">First Attempt Confirmation</p>
-                    <div className="w-10 h-10 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center border border-blue-100 group-hover:scale-105 transition-transform">
+                    <div className="w-10 h-10 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center border border-emerald-100 group-hover:scale-105 transition-transform">
                       <CheckCircle2 className="w-5 h-5" />
                     </div>
                   </div>
@@ -1232,7 +1648,7 @@ export default function EchoTrustApp() {
                     {/* Visual Legend */}
                     <div className="flex items-center space-x-3 text-xs font-semibold">
                       <span className="flex items-center text-slate-700">
-                        <span className="w-3 h-3 rounded-md bg-[#3B82F6] mr-1.5 shadow-2xs"></span>
+                        <span className="w-3 h-3 rounded-md bg-[#10B981] mr-1.5 shadow-2xs"></span>
                         First-Pass Confirmed
                       </span>
                       <span className="flex items-center text-slate-700">
@@ -1262,7 +1678,7 @@ export default function EchoTrustApp() {
                           contentStyle={{ backgroundColor: '#0F172A', borderColor: '#334155', borderRadius: '12px', color: '#fff', fontSize: '12px' }}
                           itemStyle={{ color: '#E2E8F0' }}
                         />
-                        <Bar dataKey="autoConfirmed" fill="#3B82F6" name="First-Pass Confirmed" radius={[5, 5, 0, 0]} />
+                        <Bar dataKey="autoConfirmed" fill="#10B981" name="First-Pass Confirmed" radius={[5, 5, 0, 0]} />
                         <Bar dataKey="corrections" fill="#F59E0B" name="Required Correction Loop" radius={[5, 5, 0, 0]} />
                       </BarChart>
                     </ResponsiveContainer>
@@ -1337,18 +1753,18 @@ export default function EchoTrustApp() {
 
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-5 mt-5">
                   {/* Insight 1: First Attempt Success */}
-                  <div className="bg-blue-50/40 rounded-xl p-4 border border-blue-100 flex flex-col justify-between">
+                  <div className="bg-emerald-50/50 rounded-xl p-4 border border-emerald-100 flex flex-col justify-between">
                     <div className="flex items-center justify-between">
                       <div className="flex items-center space-x-2">
-                        <CheckCircle2 className="w-4 h-4 text-blue-600" />
+                        <CheckCircle2 className="w-4 h-4 text-emerald-600" />
                         <span className="text-xs font-bold text-slate-900">First Attempt Success</span>
                       </div>
-                      <span className="text-xs font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
+                      <span className="text-xs font-bold text-emerald-700 bg-white px-2 py-0.5 rounded border border-emerald-200">
                         +2.3%
                       </span>
                     </div>
                     <div className="mt-3">
-                      <div className="text-2xl font-extrabold text-blue-900">89.4%</div>
+                      <div className="text-2xl font-extrabold text-emerald-900">89.4%</div>
                       <p className="text-xs text-slate-600 mt-1 leading-relaxed">
                         First Attempt Success reached <strong>89.4%</strong>, improved by <strong>2.3%</strong> with phonetic NATO prompts preventing homophone confusion.
                       </p>
@@ -1442,7 +1858,7 @@ export default function EchoTrustApp() {
                 </div>
                 <button
                   onClick={() => setActiveTab('live')}
-                  className="flex items-center space-x-2 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-xl font-semibold text-xs shadow-sm transition"
+                  className="flex items-center space-x-2 bg-gradient-to-r from-emerald-600 via-teal-600 to-green-600 hover:from-emerald-500 hover:to-green-500 text-white px-4 py-2 rounded-xl font-bold text-xs shadow-md shadow-emerald-600/20 transition cursor-pointer"
                 >
                   <Mic className="w-4 h-4" />
                   <span>Open Live Session</span>
@@ -1452,11 +1868,11 @@ export default function EchoTrustApp() {
               {/* Statistics Cards */}
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
                 {[
-                  { title: 'Total Sessions', value: dashboardStats ? dashboardStats.total_sessions.toLocaleString() : '14,892', change: '+12.4%', isUp: true, desc: 'Past 30 days', color: 'border-l-blue-500' },
-                  { title: 'Successfully Verified', value: dashboardStats ? dashboardStats.verified_sessions.toLocaleString() : '13,954', change: '+8.1%', isUp: true, desc: '93.7% First-pass', color: 'border-l-emerald-500' },
+                  { title: 'Total Sessions', value: dashboardStats ? dashboardStats.total_sessions.toLocaleString() : '14,892', change: '+12.4%', isUp: true, desc: 'Past 30 days', color: 'border-l-emerald-600' },
+                  { title: 'Successfully Verified', value: dashboardStats ? dashboardStats.verified_sessions.toLocaleString() : '13,954', change: '+8.1%', isUp: true, desc: '93.7% First-pass', color: 'border-l-teal-500' },
                   { title: 'Pending Confirmation', value: dashboardStats ? dashboardStats.pending_sessions.toLocaleString() : '342', change: '-4.2%', isUp: false, desc: 'Awaiting customer OK', color: 'border-l-amber-500' },
                   { title: 'Correction Loop Run', value: dashboardStats ? dashboardStats.corrections_run.toLocaleString() : '596', change: '-18.5%', isUp: true, desc: 'Errors caught & fixed', color: 'border-l-indigo-500' },
-                  { title: 'Overall Accuracy Rate', value: dashboardStats ? `${dashboardStats.accuracy_rate}%` : '98.6%', change: '+0.8%', isUp: true, desc: 'Post read-back confirm', color: 'border-l-purple-500' },
+                  { title: 'Overall Accuracy Rate', value: dashboardStats ? `${dashboardStats.accuracy_rate}%` : '98.6%', change: '+0.8%', isUp: true, desc: 'Post read-back confirm', color: 'border-l-emerald-500' },
                 ].map((stat, idx) => (
                   <div key={idx} className={`bg-white rounded-2xl border border-slate-200/90 p-4 shadow-xs border-l-4 ${stat.color}`}>
                     <p className="text-xs font-bold text-slate-500 uppercase tracking-wider">{stat.title}</p>
@@ -1479,7 +1895,7 @@ export default function EchoTrustApp() {
                     <h3 className="font-bold text-slate-900 text-sm">Recent Verification Sessions</h3>
                     <p className="text-xs text-slate-500">Live feed of voice capture and phonetic confirmations</p>
                   </div>
-                  <button onClick={() => setActiveTab('history')} className="text-blue-600 hover:text-blue-800 text-xs font-semibold flex items-center">
+                  <button onClick={() => setActiveTab('history')} className="text-emerald-700 hover:text-emerald-900 text-xs font-semibold flex items-center cursor-pointer">
                     <span>View All in History</span>
                     <ChevronRight className="w-3.5 h-3.5 ml-1" />
                   </button>
@@ -1499,7 +1915,7 @@ export default function EchoTrustApp() {
                     </thead>
                     <tbody className="divide-y divide-slate-100 text-slate-700">
                       {recentSessions.map((sess) => (
-                        <tr key={sess.id} className="hover:bg-blue-50/40 transition">
+                        <tr key={sess.id} className="hover:bg-emerald-50/30 transition">
                           <td className="py-3 px-4">
                             <div className="font-bold text-slate-900">{sess.customer}</div>
                             <div className="text-[11px] text-slate-400 font-mono">{sess.id} • {sess.customerId}</div>
@@ -1524,14 +1940,14 @@ export default function EchoTrustApp() {
                           </td>
                           <td className="py-3 px-4">
                             <span className={`px-2.5 py-0.5 rounded-full font-medium inline-flex items-center space-x-1 ${
-                              sess.status === 'Verified' ? 'bg-emerald-100 text-emerald-800' : 'bg-blue-100 text-blue-800'
+                              sess.status === 'Verified' ? 'bg-emerald-100 text-emerald-800' : 'bg-teal-50 text-teal-800 border border-teal-200'
                             }`}>
-                              <span className={`w-1.5 h-1.5 rounded-full mr-1.5 ${sess.status === 'Verified' ? 'bg-emerald-500' : 'bg-blue-500'}`}></span>
+                              <span className={`w-1.5 h-1.5 rounded-full mr-1.5 ${sess.status === 'Verified' ? 'bg-emerald-500' : 'bg-teal-500'}`}></span>
                               {sess.status}
                             </span>
                           </td>
                           <td className="py-3 px-4 text-right">
-                            <button onClick={() => inspectSession(sess)} className="text-blue-600 hover:text-blue-800 font-semibold hover:underline inline-flex items-center">
+                            <button onClick={() => inspectSession(sess)} className="text-emerald-700 hover:text-emerald-900 font-semibold hover:underline inline-flex items-center cursor-pointer">
                               Inspect <ChevronRight className="w-3.5 h-3.5 ml-0.5" />
                             </button>
                           </td>
@@ -1552,47 +1968,118 @@ export default function EchoTrustApp() {
               {/* Customer Banner */}
               <div className="bg-white rounded-2xl border border-slate-200/90 p-5 shadow-xs flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
                 <div className="flex items-center space-x-4">
-                  <div className="w-12 h-12 rounded-xl bg-blue-100 text-blue-700 flex items-center justify-center font-bold text-lg shadow-xs border border-blue-200">
-                    {customerName ? customerName.split(' ').map(n => n[0]).join('').slice(0, 2) : 'RS'}
+                  <div className={`w-12 h-12 rounded-xl flex items-center justify-center font-bold text-lg shadow-xs border ${
+                    customerName ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-slate-100 text-slate-400 border-slate-200'
+                  }`}>
+                    {customerName ? customerName.split(' ').map(n => n[0]).join('').slice(0, 2) : <User className="w-6 h-6 text-slate-400" />}
                   </div>
                   <div>
-                    <div className="flex items-center space-x-2">
-                      <h2 className="text-lg font-bold text-slate-900">{customerName}</h2>
-                      <span className="px-2 py-0.5 bg-blue-100 text-blue-800 rounded-md text-xs font-semibold">
-                        Account Opening KYC
+                    <div className="flex flex-wrap items-center gap-2">
+                      <h2 className="text-lg font-bold text-slate-900">
+                        {customerName || (currentSessionId ? 'Awaiting Customer Identification...' : 'Ready for Verification Call')}
+                      </h2>
+                      <span className={`px-2 py-0.5 rounded-md text-xs font-semibold border ${
+                        currentSessionId
+                          ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                          : 'bg-slate-100 text-slate-500 border-slate-200'
+                      }`}>
+                        {currentSessionId ? 'Live Call / Session Active' : 'Session Idle'}
                       </span>
+                      {isAutonomousMode && (
+                        <span className="inline-flex items-center space-x-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-500/10 text-emerald-800 border border-emerald-300">
+                          <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                          <span>Autonomous Voice Loop Active</span>
+                        </span>
+                      )}
                     </div>
                     <div className="flex flex-wrap items-center gap-x-4 text-xs text-slate-500 mt-0.5">
-                      <span>Customer ID: <strong className="text-slate-700 font-mono">{customerId}</strong></span>
-                      <span>App No: <strong className="text-slate-700 font-mono">{appNo}</strong></span>
-                      <span>Session: <strong className="text-slate-700 font-mono">{currentSessionId}</strong></span>
+                      <span>Customer ID: <strong className="text-slate-700 font-mono">{customerId || 'Waiting for capture...'}</strong></span>
+                      <span>App No: <strong className="text-slate-700 font-mono">{appNo || 'Pending'}</strong></span>
+                      <span>Session ID: <strong className="text-slate-700 font-mono">{currentSessionId || 'None'}</strong></span>
                     </div>
                   </div>
                 </div>
 
                 {/* Call Controls */}
-                <div className="flex items-center space-x-3 w-full md:w-auto justify-end">
+                <div className="flex flex-wrap items-center gap-2.5 w-full md:w-auto justify-end">
                   <div className="flex items-center space-x-2 bg-slate-100 px-3 py-1.5 rounded-xl border border-slate-200">
-                    <span className={`w-2.5 h-2.5 rounded-full ${isRecording ? 'bg-rose-500 animate-ping' : 'bg-slate-400'}`}></span>
+                    <span className={`w-2.5 h-2.5 rounded-full ${isRecording ? 'bg-rose-500 animate-ping' : isPlayingAudio ? 'bg-emerald-500 animate-pulse' : 'bg-slate-400'}`}></span>
                     <span className="text-xs font-mono font-bold text-slate-800">{formatDuration(callDuration)}</span>
                     <span className="text-[10px] text-slate-400 uppercase font-semibold">
-                      {isRecording ? 'Live Streaming' : 'Live Call'}
+                      {isRecording ? 'Listening...' : isPlayingAudio ? 'AI Speaking' : 'Live Call'}
                     </span>
                   </div>
 
+                  {isPlayingAudio && (
+                    <button
+                      onClick={interruptAudioPlayback}
+                      className="flex items-center space-x-1.5 px-3 py-2 rounded-xl font-semibold text-xs bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-300 transition shadow-xs cursor-pointer animate-pulse"
+                      title="Interrupt AI Speech"
+                    >
+                      <Pause className="w-3.5 h-3.5 text-amber-700 fill-current" />
+                      <span>Interrupt AI</span>
+                    </button>
+                  )}
+
+                  {/* Primary 1-Click Automated Call Start */}
+                  <button
+                    onClick={handleStartAutomatedSession}
+                    disabled={isProcessingAudio}
+                    className="flex items-center space-x-2 px-4 py-2 rounded-xl font-bold text-xs sm:text-sm bg-gradient-to-r from-emerald-600 via-teal-600 to-emerald-700 hover:from-emerald-700 hover:to-teal-800 text-white shadow-md hover:shadow-lg transition cursor-pointer"
+                    title="Start Automated Hands-Free Verification Call (Plays Shivani greeting & auto-listens)"
+                  >
+                    <Sparkles className="w-4 h-4 text-emerald-200" />
+                    <span>{currentSessionId ? 'Restart Automated Call' : 'Start Automated KYC Call'}</span>
+                  </button>
+
+                  {/* Auto-Loop Toggle Button */}
+                  <button
+                    onClick={() => {
+                      setIsAutonomousMode(prev => {
+                        const next = !prev;
+                        isAutonomousModeRef.current = next;
+                        if (!next && isRecordingRef.current) {
+                          stopMicrophoneCapture();
+                        }
+                        return next;
+                      });
+                    }}
+                    className={`flex items-center space-x-1.5 px-3 py-2 rounded-xl text-xs font-semibold border transition cursor-pointer ${
+                      isAutonomousMode
+                        ? 'bg-emerald-50 text-emerald-800 border-emerald-300'
+                        : 'bg-slate-100 text-slate-600 border-slate-300'
+                    }`}
+                    title="Toggle Hands-Free Voice Auto-Loop"
+                  >
+                    <span className={`w-2 h-2 rounded-full ${isAutonomousMode ? 'bg-emerald-500 animate-pulse' : 'bg-slate-400'}`}></span>
+                    <span>{isAutonomousMode ? 'Auto: ON' : 'Auto: OFF'}</span>
+                  </button>
+
+                  {/* Manual Mic Button */}
                   <button
                     onClick={handleToggleRecording}
                     disabled={isProcessingAudio}
-                    className={`flex items-center space-x-2 px-4 py-2 rounded-xl font-semibold text-xs sm:text-sm shadow-sm transition ${
+                    className={`flex items-center space-x-2 px-3.5 py-2 rounded-xl font-semibold text-xs shadow-sm transition cursor-pointer ${
                       isRecording
-                        ? 'bg-rose-600 hover:bg-rose-700 text-white'
+                        ? 'bg-rose-600 hover:bg-rose-700 text-white animate-pulse'
                         : isProcessingAudio
                         ? 'bg-indigo-600 text-white cursor-wait'
-                        : 'bg-emerald-600 hover:bg-emerald-700 text-white'
+                        : 'bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200'
                     }`}
+                    title={isRecording ? 'Click to stop speech and process' : 'Manual Mic Capture'}
                   >
                     {isRecording ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
-                    <span>{isRecording ? 'Stop & Process Voice' : isProcessingAudio ? 'Processing Audio...' : 'Start Voice Capture'}</span>
+                    <span>{isRecording ? 'Listening (Stop)' : isProcessingAudio ? 'Processing...' : 'Manual Mic'}</span>
+                  </button>
+
+                  <button
+                    onClick={handleProcessSampleAudio}
+                    disabled={isProcessingAudio}
+                    className="flex items-center space-x-1.5 px-3 py-2 rounded-xl font-semibold text-xs bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 transition shadow-xs cursor-pointer"
+                    title="Play and transcribe reference audio"
+                  >
+                    <Play className="w-3.5 h-3.5 text-emerald-600 fill-emerald-600" />
+                    <span>Reference Audio</span>
                   </button>
                 </div>
               </div>
@@ -1603,31 +2090,69 @@ export default function EchoTrustApp() {
                 <div className="lg:col-span-7 space-y-6">
                   {/* Waveform Card */}
                   <div className="bg-white rounded-2xl border border-slate-200/90 shadow-xs overflow-hidden flex flex-col">
-                    <div className="p-4 bg-[#0F172A] text-white flex items-center justify-between">
+                    <div className="p-4 bg-[#0A1A12] text-white flex flex-wrap items-center justify-between gap-3 border-b border-emerald-950">
                       <div className="flex items-center space-x-3">
-                        <div className="p-2 rounded-lg bg-blue-500/20 text-blue-400">
+                        <div className="p-2 rounded-lg bg-emerald-500/20 text-emerald-400">
                           <Radio className="w-4 h-4 animate-pulse" />
                         </div>
                         <div>
-                          <h3 className="text-sm font-semibold text-white">Live Voice Entity Capture & Synthesizer</h3>
-                          <p className="text-[11px] text-slate-400">Streaming bidirectional channel with acoustic phonetic filter</p>
+                          <div className="flex items-center space-x-2">
+                            <h3 className="text-sm font-semibold text-white">Live Voice Entity Capture & Synthesizer</h3>
+                            <span className="text-[10px] bg-emerald-500/20 text-emerald-300 border border-emerald-400/30 px-1.5 py-0.5 rounded font-mono">
+                              Official Gnani AI Active
+                            </span>
+                          </div>
+                          <p className="text-[11px] text-emerald-300/70">
+                            STT: Prisma-v3.0 ({selectedSttLanguage === 'hi-IN' ? 'Hindi / Hinglish' : 'English / Hinglish'}) | TTS: Timbre-v3.0 ({selectedTtsVoice})
+                          </p>
                         </div>
                       </div>
-                      <span className="text-[10px] px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-400/30">
-                        Noise Cancellation Active
-                      </span>
+
+                      {/* STT Language & Voice Controls */}
+                      <div className="flex flex-wrap items-center gap-2.5">
+                        <div className="flex items-center space-x-1.5">
+                          <span className="text-[11px] text-emerald-300/80 font-medium">STT Lang:</span>
+                          <select
+                            value={selectedSttLanguage}
+                            onChange={(e) => setSelectedSttLanguage(e.target.value)}
+                            className="bg-emerald-950/90 text-emerald-100 text-xs rounded-lg border border-emerald-700/60 px-2 py-1 focus:outline-none focus:ring-1 focus:ring-emerald-400 cursor-pointer"
+                            title="STT Language (Hindi / English / Hinglish only - No Telugu)"
+                          >
+                            <option value="hi-IN">Hindi / Hinglish (hi-IN)</option>
+                            <option value="en-IN">English / Hinglish (en-IN)</option>
+                          </select>
+                        </div>
+
+                        {/* Voice Tone Selector */}
+                        <div className="flex items-center space-x-1.5">
+                          <span className="text-[11px] text-emerald-300/80 font-medium">Voice:</span>
+                          <select
+                            value={selectedTtsVoice}
+                            onChange={(e) => setSelectedTtsVoice(e.target.value)}
+                            className="bg-emerald-950/90 text-emerald-100 text-xs rounded-lg border border-emerald-700/60 px-2 py-1 focus:outline-none focus:ring-1 focus:ring-emerald-400 cursor-pointer"
+                            title="Select Gnani TTS Voice Tone"
+                          >
+                            <option value="Shivani">Shivani (Indian Female - Ref Audio Tone)</option>
+                            <option value="Shubham">Shubham (Indian Male - Conversational)</option>
+                            <option value="Devansh">Devansh (Indian Male - Warm)</option>
+                            <option value="Prakash">Prakash (Indian Male - BFSI)</option>
+                            <option value="Kaveri">Kaveri (Indian Female - Professional)</option>
+                            <option value="Nalini">Nalini (Indian Female - Hindi)</option>
+                          </select>
+                        </div>
+                      </div>
                     </div>
 
                     {/* Real-time Dynamic Audio Waveform */}
-                    <div className="bg-gradient-to-b from-[#0F172A] to-[#1E293B] px-6 py-4 flex items-center justify-center border-t border-slate-800">
+                    <div className="bg-gradient-to-b from-[#0A1A12] to-[#040C08] px-6 py-4 flex items-center justify-center border-t border-emerald-950">
                       <div className="flex items-center space-x-1.5 h-12 w-full max-w-md justify-center">
                         {audioWaveformHeights.map((h, i) => (
                           <div
                             key={i}
                             className={`w-1.5 rounded-full transition-all duration-150 ${
                               isRecording || isPlayingAudio
-                                ? 'bg-gradient-to-t from-blue-500 to-indigo-300'
-                                : 'bg-slate-700'
+                                ? 'bg-gradient-to-t from-emerald-500 via-teal-400 to-green-300'
+                                : 'bg-slate-800'
                             }`}
                             style={{ height: isRecording || isPlayingAudio ? `${h}%` : '20%' }}
                           />
@@ -1637,38 +2162,52 @@ export default function EchoTrustApp() {
 
                     {/* Conversation Stream */}
                     <div className="p-4 bg-slate-50 border-t border-slate-200 flex-1 max-h-[380px] overflow-y-auto space-y-3">
-                      <div className="text-center">
-                        <span className="text-[10px] uppercase font-bold text-slate-400 tracking-wider bg-white px-2.5 py-0.5 rounded-full border border-slate-200">
-                          Session Initiated – 10:40 AM
-                        </span>
-                      </div>
-
-                      {dialogue.map((msg) => (
-                        <div key={msg.id} className={`flex flex-col ${msg.sender === 'user' ? 'items-end' : 'items-start'}`}>
-                          <div className="flex items-center space-x-1.5 mb-1 px-1">
-                            <span className="text-[10px] font-bold text-slate-500 capitalize">
-                              {msg.sender === 'ai' ? '🤖 EchoTrust AI' : `👤 Customer (${customerName.split(' ')[0]})`}
-                            </span>
-                            <span className="text-[9px] text-slate-400">{msg.time}</span>
+                      {dialogue.length === 0 ? (
+                        <div className="py-12 flex flex-col items-center justify-center text-center">
+                          <div className="w-12 h-12 rounded-2xl bg-emerald-50 text-emerald-600 flex items-center justify-center mb-3 border border-emerald-100">
+                            <Mic className="w-6 h-6" />
                           </div>
-                          <div className={`max-w-[85%] rounded-2xl px-4 py-2.5 text-xs shadow-xs leading-relaxed ${
-                            msg.sender === 'user' ? 'bg-blue-600 text-white rounded-br-xs' : 'bg-white text-slate-800 border border-slate-200 rounded-bl-xs'
-                          }`}>
-                            <p>{msg.text}</p>
-                            {msg.phonetic && (
-                              <div className="mt-2 pt-2 border-t border-slate-100 flex items-center justify-between">
-                                <span className="text-[10px] font-semibold text-blue-700 bg-blue-50 px-2 py-0.5 rounded">
-                                  Phonetic Read-Back Enabled
-                                </span>
-                                <button onClick={() => speakReadBack(msg.text)} className="text-[10px] font-semibold text-slate-600 hover:text-blue-600 flex items-center space-x-1">
-                                  <Volume2 className="w-3 h-3" />
-                                  <span>Re-hear</span>
-                                </button>
-                              </div>
-                            )}
-                          </div>
+                          <h4 className="text-sm font-bold text-slate-800">No Dialogue Messages Yet</h4>
+                          <p className="text-xs text-slate-500 max-w-sm mt-1">
+                            Click <strong>"Start Voice Capture"</strong> or <strong>"Play & Transcribe generated-audio.wav"</strong> or type below to begin real-time speech verification.
+                          </p>
                         </div>
-                      ))}
+                      ) : (
+                        <>
+                          <div className="text-center">
+                            <span className="text-[10px] uppercase font-bold text-slate-400 tracking-wider bg-white px-2.5 py-0.5 rounded-full border border-slate-200">
+                              Live Voice Stream Active
+                            </span>
+                          </div>
+
+                          {dialogue.map((msg) => (
+                            <div key={msg.id} className={`flex flex-col ${msg.sender === 'user' ? 'items-end' : 'items-start'}`}>
+                              <div className="flex items-center space-x-1.5 mb-1 px-1">
+                                <span className="text-[10px] font-bold text-slate-500 capitalize">
+                                  {msg.sender === 'ai' ? '🤖 EchoTrust AI' : `👤 Customer (${customerName ? customerName.split(' ')[0] : 'Speaker'})`}
+                                </span>
+                                <span className="text-[9px] text-slate-400">{msg.time}</span>
+                              </div>
+                              <div className={`max-w-[85%] rounded-2xl px-4 py-2.5 text-xs shadow-xs leading-relaxed ${
+                                msg.sender === 'user' ? 'bg-gradient-to-r from-emerald-600 to-teal-600 text-white rounded-br-xs' : 'bg-white text-slate-800 border border-slate-200 rounded-bl-xs'
+                              }`}>
+                                <p>{msg.text}</p>
+                                {msg.phonetic && (
+                                  <div className="mt-2 pt-2 border-t border-slate-100 flex items-center justify-between">
+                                    <span className="text-[10px] font-semibold text-emerald-800 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
+                                      Phonetic Read-Back Enabled
+                                    </span>
+                                    <button onClick={() => speakReadBack(msg.text)} className="text-[10px] font-semibold text-slate-600 hover:text-emerald-700 flex items-center space-x-1 cursor-pointer">
+                                      <Volume2 className="w-3 h-3" />
+                                      <span>Re-hear</span>
+                                    </button>
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          ))}
+                        </>
+                      )}
                     </div>
 
                     {/* Quick Simulated Input */}
@@ -1676,7 +2215,7 @@ export default function EchoTrustApp() {
                       <input
                         type="text"
                         placeholder="Simulate customer speech input (e.g. My name is Rahul Sharma or PAN ABCDE1234F)..."
-                        className="flex-1 text-xs border border-slate-200 rounded-xl px-3 py-2 focus:ring-1 focus:ring-blue-500 outline-none"
+                        className="flex-1 text-xs border border-slate-200 rounded-xl px-3 py-2 focus:ring-1 focus:ring-emerald-500 focus:border-emerald-500 outline-none"
                         onKeyDown={(e) => {
                           if (e.key === 'Enter' && e.target.value.trim()) {
                             handleSimulatedSpeechInput(e.target.value);
@@ -1686,11 +2225,14 @@ export default function EchoTrustApp() {
                       />
                       <button
                         onClick={() => {
-                          const ent = currentFocusedEntity;
-                          const phonetics = getPhoneticSpelling(ent.value).map(p => `${p.char} as in ${p.code}`).join(', ');
-                          speakReadBack(`Please confirm your captured ${ent.label}: ${ent.value}. Phonetic confirmation: ${phonetics}. Is this accurate?`);
+                          if (hasActiveFocusedEntity) {
+                            const phonetics = getPhoneticSpelling(currentFocusedEntity.value).map(p => `${p.char} as in ${p.code}`).join(', ');
+                            speakReadBack(`Please confirm your captured ${currentFocusedEntity.label}: ${currentFocusedEntity.value}. Phonetic confirmation: ${phonetics}. Is this accurate?`);
+                          } else {
+                            speakReadBack("EchoTrust intelligent voice verification system active. Please speak your full name, phone number, or address.");
+                          }
                         }}
-                        className="px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-semibold flex items-center space-x-1"
+                        className="px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-semibold flex items-center space-x-1 cursor-pointer"
                       >
                         <Volume2 className="w-3.5 h-3.5" />
                         <span>Speak AI Prompt</span>
@@ -1699,70 +2241,90 @@ export default function EchoTrustApp() {
                   </div>
 
                   {/* Phonetic Disambiguation Engine Panel */}
-                  <div className="bg-gradient-to-br from-blue-900 to-[#0A192F] text-white rounded-2xl p-5 shadow-lg relative overflow-hidden">
+                  <div className="bg-gradient-to-br from-slate-900 via-emerald-950 to-teal-950 text-white rounded-2xl p-5 shadow-lg relative overflow-hidden border border-emerald-900/50">
                     <div className="flex items-center justify-between mb-3 relative z-10">
                       <div className="flex items-center space-x-2">
-                        <Sparkles className="w-5 h-5 text-amber-400" />
-                        <h3 className="font-bold text-sm tracking-wide uppercase text-blue-200">
+                        <Sparkles className="w-5 h-5 text-emerald-400" />
+                        <h3 className="font-bold text-sm tracking-wide uppercase text-emerald-200">
                           Phonetic Disambiguation Engine
                         </h3>
                       </div>
-                      <span className="text-xs bg-blue-500/30 text-blue-200 px-2.5 py-0.5 rounded-full border border-blue-400/30">
-                        Active Target: {currentFocusedEntity.label}
+                      <span className={`text-xs px-2.5 py-0.5 rounded-full border ${
+                        hasActiveFocusedEntity && currentFocusedEntity
+                          ? 'bg-emerald-500/20 text-emerald-200 border-emerald-400/30'
+                          : 'bg-slate-800/80 text-slate-400 border-slate-700'
+                      }`}>
+                        {hasActiveFocusedEntity && currentFocusedEntity
+                          ? `Active Target: ${currentFocusedEntity.label}`
+                          : 'Engine Idle / Standby'}
                       </span>
                     </div>
 
-                    {/* NATO Decomposed Chips */}
-                    <div className="bg-white/10 backdrop-blur-md rounded-xl p-4 border border-white/15 relative z-10 mb-4">
-                      <div className="flex items-center justify-between mb-2">
-                        <span className="text-xs text-blue-200">Captured Value:</span>
-                        <span className="font-mono text-sm font-bold text-white tracking-wider bg-black/30 px-2.5 py-0.5 rounded">
-                          {currentFocusedEntity.value}
-                        </span>
-                      </div>
-                      <div className="flex flex-wrap gap-1.5 max-h-28 overflow-y-auto pr-1">
-                        {getPhoneticSpelling(currentFocusedEntity.value).map((item, idx) => (
-                          <div key={idx} className="flex items-center space-x-1 bg-white/20 px-2 py-1 rounded-md text-xs border border-white/20">
-                            <span className="font-bold text-amber-300 font-mono">{item.char}</span>
-                            <span className="text-slate-300 text-[10px]">→</span>
-                            <span className="text-white font-medium">{item.code}</span>
+                    {hasActiveFocusedEntity && currentFocusedEntity ? (
+                      <>
+                        {/* NATO Decomposed Chips */}
+                        <div className="bg-white/10 backdrop-blur-md rounded-xl p-4 border border-white/15 relative z-10 mb-4">
+                          <div className="flex items-center justify-between mb-2">
+                            <span className="text-xs text-emerald-200">Captured Value:</span>
+                            <span className="font-mono text-sm font-bold text-white tracking-wider bg-black/40 px-2.5 py-0.5 rounded border border-white/10">
+                              {currentFocusedEntity.value}
+                            </span>
                           </div>
-                        ))}
-                      </div>
-                    </div>
+                          <div className="flex flex-wrap gap-1.5 max-h-28 overflow-y-auto pr-1">
+                            {getPhoneticSpelling(currentFocusedEntity.value).map((item, idx) => (
+                              <div key={idx} className="flex items-center space-x-1 bg-white/15 px-2 py-1 rounded-md text-xs border border-white/15">
+                                <span className="font-bold text-emerald-300 font-mono">{item.char}</span>
+                                <span className="text-slate-300 text-[10px]">→</span>
+                                <span className="text-white font-medium">{item.code}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
 
-                    {/* Actions */}
-                    <div className="bg-blue-950/70 rounded-xl p-4 border border-blue-800/80 relative z-10 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
-                      <div>
-                        <div className="text-xs font-bold text-white">"Did we capture your information correctly?"</div>
-                        <div className="text-[11px] text-blue-300">Awaiting customer vocal confirmation or agent override</div>
+                        {/* Actions */}
+                        <div className="bg-black/40 rounded-xl p-4 border border-emerald-900/60 relative z-10 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+                          <div>
+                            <div className="text-xs font-bold text-white">"Did we capture your information correctly?"</div>
+                            <div className="text-[11px] text-emerald-300/80">Awaiting customer vocal confirmation or agent override</div>
+                          </div>
+                          <div className="flex items-center space-x-2 w-full sm:w-auto">
+                            <button
+                              onClick={() => {
+                                speakReadBack(`Spelling confirmation for ${currentFocusedEntity.label}: ${getPhoneticSpelling(currentFocusedEntity.value).map(p => `${p.char} as in ${p.code}`).join('. ')}. Is this correct?`);
+                              }}
+                              className="px-3 py-2 bg-emerald-800 hover:bg-emerald-700 text-white rounded-xl text-xs font-semibold flex items-center space-x-1.5 transition cursor-pointer"
+                            >
+                              <Volume2 className="w-3.5 h-3.5" />
+                              <span>Play Gnani Voice</span>
+                            </button>
+                            <button
+                              onClick={() => handleConfirmEntity(currentFocusedEntity.id)}
+                              className="flex-1 sm:flex-none px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold flex items-center justify-center space-x-1.5 shadow-md shadow-emerald-900/30 transition cursor-pointer"
+                            >
+                              <Check className="w-4 h-4" />
+                              <span>Yes, Confirm</span>
+                            </button>
+                            <button
+                              onClick={() => initiateCorrection(currentFocusedEntity)}
+                              className="flex-1 sm:flex-none px-4 py-2 bg-rose-600 hover:bg-rose-500 text-white rounded-xl text-xs font-bold flex items-center justify-center space-x-1.5 shadow-md shadow-rose-900/30 transition cursor-pointer"
+                            >
+                              <X className="w-4 h-4" />
+                              <span>No, Correct It</span>
+                            </button>
+                          </div>
+                        </div>
+                      </>
+                    ) : (
+                      <div className="bg-white/5 backdrop-blur-md rounded-xl p-6 border border-white/10 text-center relative z-10 my-2">
+                        <div className="w-12 h-12 mx-auto rounded-full bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 mb-3">
+                          <Sparkles className="w-6 h-6 animate-pulse" />
+                        </div>
+                        <h4 className="text-sm font-semibold text-white mb-1">Awaiting Entity Verification</h4>
+                        <p className="text-xs text-slate-300/80 max-w-sm mx-auto">
+                          Speak into the microphone or click "Play & Transcribe generated-audio.wav" to extract customer entities and activate real-time phonetic disambiguation.
+                        </p>
                       </div>
-                      <div className="flex items-center space-x-2 w-full sm:w-auto">
-                        <button
-                          onClick={() => {
-                            speakReadBack(`Spelling confirmation for ${currentFocusedEntity.label}: ${getPhoneticSpelling(currentFocusedEntity.value).map(p => `${p.char} as in ${p.code}`).join('. ')}. Is this correct?`);
-                          }}
-                          className="px-3 py-2 bg-blue-700 hover:bg-blue-600 text-white rounded-xl text-xs font-semibold flex items-center space-x-1 transition"
-                        >
-                          <Play className="w-3.5 h-3.5 fill-current" />
-                          <span>Play Audio</span>
-                        </button>
-                        <button
-                          onClick={() => handleConfirmEntity(currentFocusedEntity.id)}
-                          className="flex-1 sm:flex-none px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold flex items-center justify-center space-x-1.5 shadow-md shadow-emerald-900/30 transition"
-                        >
-                          <Check className="w-4 h-4" />
-                          <span>Yes, Confirm</span>
-                        </button>
-                        <button
-                          onClick={() => initiateCorrection(currentFocusedEntity)}
-                          className="flex-1 sm:flex-none px-4 py-2 bg-rose-600 hover:bg-rose-500 text-white rounded-xl text-xs font-bold flex items-center justify-center space-x-1.5 shadow-md shadow-rose-900/30 transition"
-                        >
-                          <X className="w-4 h-4" />
-                          <span>No, Correct It</span>
-                        </button>
-                      </div>
-                    </div>
+                    )}
                   </div>
                 </div>
 
@@ -1770,7 +2332,7 @@ export default function EchoTrustApp() {
                 <div className="lg:col-span-5 space-y-3">
                   <div className="flex items-center justify-between">
                     <h3 className="font-bold text-slate-800 text-sm tracking-tight flex items-center space-x-2">
-                      <Layers className="w-4 h-4 text-blue-600" />
+                      <Layers className="w-4 h-4 text-emerald-600" />
                       <span>Captured Entities & Confidence</span>
                     </h3>
                     <span className="text-xs font-semibold text-slate-500">
@@ -1782,79 +2344,102 @@ export default function EchoTrustApp() {
                     const Icon = entity.icon || ENTITY_ICONS[entity.id] || User;
                     const confStyle = getConfidenceBadge(entity.confidence);
                     const isSelected = activeEntityIndex === idx;
+                    const hasValue = Boolean(entity.value && entity.value.trim().length > 0);
 
                     return (
                       <div
                         key={entity.id}
-                        onClick={() => setActiveEntityIndex(idx)}
-                        className={`bg-white rounded-2xl p-4 border transition-all cursor-pointer shadow-xs relative ${
-                          isSelected
-                            ? 'border-blue-600 ring-2 ring-blue-500/20 bg-blue-50/20'
+                        onClick={() => {
+                          if (hasValue) setActiveEntityIndex(idx);
+                        }}
+                        className={`bg-white rounded-2xl p-4 border transition-all shadow-xs relative ${
+                          hasValue ? 'cursor-pointer' : 'cursor-default opacity-85'
+                        } ${
+                          isSelected && hasValue
+                            ? 'border-emerald-600 ring-2 ring-emerald-500/20 bg-emerald-50/20'
                             : 'border-slate-200 hover:border-slate-300'
                         }`}
                       >
                         <div className="flex items-start justify-between">
                           <div className="flex items-center space-x-2.5">
-                            <div className={`p-2 rounded-xl ${isSelected ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-600'}`}>
+                            <div className={`p-2 rounded-xl ${isSelected && hasValue ? 'bg-emerald-600 text-white' : 'bg-slate-100 text-slate-600'}`}>
                               <Icon className="w-4 h-4" />
                             </div>
                             <div>
                               <div className="text-xs font-bold text-slate-900">{entity.label}</div>
                               <div className="font-mono text-sm font-semibold text-slate-800 tracking-tight mt-0.5">
-                                {entity.value}
+                                {hasValue ? (
+                                  entity.value
+                                ) : (
+                                  <span className="text-slate-400 font-sans italic font-normal text-xs">Waiting for vocal input...</span>
+                                )}
                               </div>
                             </div>
                           </div>
-                          <span className={`px-2 py-0.5 rounded text-[11px] font-bold border ${confStyle.bg}`}>
-                            {entity.confidence}% Conf.
+                          <span className={`px-2 py-0.5 rounded text-[11px] font-bold border ${hasValue ? confStyle.bg : 'bg-slate-100 text-slate-400 border-slate-200'}`}>
+                            {hasValue ? `${entity.confidence}% Conf.` : '0% Conf.'}
                           </span>
                         </div>
 
                         {/* Progress Bar */}
                         <div className="mt-3">
                           <div className="w-full bg-slate-100 h-1.5 rounded-full overflow-hidden">
-                            <div className={`h-full rounded-full transition-all duration-500 ${confStyle.bar}`} style={{ width: `${entity.confidence}%` }} />
+                            <div
+                              className={`h-full rounded-full transition-all duration-500 ${hasValue ? confStyle.bar : 'bg-slate-200'}`}
+                              style={{ width: `${hasValue ? entity.confidence : 0}%` }}
+                            />
                           </div>
                         </div>
 
                         {/* Phonetics Preview */}
                         <div className="mt-2 text-[11px] text-slate-500 bg-slate-50 p-2 rounded-lg border border-slate-100 flex items-center justify-between">
-                          <span className="truncate pr-2"><strong>Phonetics:</strong> {entity.phoneticSummary}</span>
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              speakReadBack(`Entity ${entity.label}: ${entity.value}`);
-                            }}
-                            className="text-blue-600 hover:text-blue-800 p-1"
-                          >
-                            <Volume2 className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
-
-                        {/* Action buttons */}
-                        <div className="mt-3 pt-2 border-t border-slate-100 flex items-center justify-end space-x-2">
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              initiateCorrection(entity);
-                            }}
-                            className="px-2.5 py-1 text-[11px] font-semibold text-slate-600 hover:text-slate-900 hover:bg-slate-100 rounded-lg transition"
-                          >
-                            Manual Edit
-                          </button>
-                          {entity.status !== 'verified' && (
+                          <span className="truncate pr-2">
+                            <strong>Phonetics:</strong>{' '}
+                            {hasValue ? (
+                              entity.phoneticSummary
+                            ) : (
+                              <span className="italic text-slate-400">No phonetics captured yet</span>
+                            )}
+                          </span>
+                          {hasValue && (
                             <button
                               onClick={(e) => {
                                 e.stopPropagation();
-                                handleConfirmEntity(entity.id);
+                                speakReadBack(`Entity ${entity.label}: ${entity.value}`);
                               }}
-                              className="px-3 py-1 text-[11px] font-bold text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition shadow-xs flex items-center space-x-1"
+                              className="text-emerald-700 hover:text-emerald-900 p-1 cursor-pointer"
                             >
-                              <Check className="w-3 h-3" />
-                              <span>Confirm Match</span>
+                              <Volume2 className="w-3.5 h-3.5" />
                             </button>
                           )}
                         </div>
+
+                        {/* Action buttons */}
+                        {hasValue && (
+                          <div className="mt-3 pt-2 border-t border-slate-100 flex items-center justify-end space-x-2">
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                initiateCorrection(entity);
+                              }}
+                              className="px-2.5 py-1 text-[11px] font-semibold text-slate-600 hover:text-slate-900 hover:bg-slate-100 rounded-lg transition cursor-pointer"
+                            >
+                              Manual Edit
+                            </button>
+                            {entity.status !== 'verified' && (
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleConfirmEntity(entity.id);
+                                }}
+                                className="px-3 py-1 text-[11px] font-bold text-white bg-emerald-600 hover:bg-emerald-700 rounded-lg transition shadow-xs flex items-center space-x-1 cursor-pointer"
+                              >
+                                <Check className="w-3 h-3" />
+                                <span>Confirm Match</span>
+                              </button>
+                            )}
+                          </div>
+                        )}
                       </div>
                     );
                   })}
@@ -1874,7 +2459,7 @@ export default function EchoTrustApp() {
                   <p className="text-xs text-slate-500">Fine-grained acoustic confidence scores and validation rule compliance</p>
                 </div>
                 <span className="text-xs bg-white px-3 py-1.5 rounded-xl border border-slate-200 text-slate-600 font-medium shadow-2xs">
-                  Showing 6 Extracted Entities for <strong>{currentSessionId}</strong>
+                  Showing 6 Extracted Entities for <strong>{currentSessionId || 'No Active Session'}</strong>
                 </span>
               </div>
 
@@ -1883,13 +2468,14 @@ export default function EchoTrustApp() {
                   const Icon = entity.icon || ENTITY_ICONS[entity.id] || User;
                   const conf = getConfidenceBadge(entity.confidence);
                   const phonetics = getPhoneticSpelling(entity.value);
+                  const hasVal = Boolean(entity.value && entity.value.trim().length > 0);
 
                   return (
                     <div key={entity.id} className="bg-white rounded-2xl border border-slate-200/90 shadow-xs p-5 flex flex-col justify-between">
                       <div>
                         <div className="flex items-start justify-between">
                           <div className="flex items-center space-x-3">
-                            <div className="p-2.5 rounded-xl bg-blue-50 text-blue-600 border border-blue-100">
+                            <div className="p-2.5 rounded-xl bg-emerald-50 text-emerald-700 border border-emerald-100">
                               <Icon className="w-5 h-5" />
                             </div>
                             <div>
@@ -1897,33 +2483,41 @@ export default function EchoTrustApp() {
                               <h3 className="font-bold text-slate-900 text-sm">{entity.label}</h3>
                             </div>
                           </div>
-                          <span className={`px-2 py-0.5 rounded text-xs font-bold border ${conf.bg}`}>
-                            {entity.confidence}%
+                          <span className={`px-2 py-0.5 rounded text-xs font-bold border ${hasVal ? conf.bg : 'bg-slate-100 text-slate-400 border-slate-200'}`}>
+                            {hasVal ? `${entity.confidence}%` : '0%'}
                           </span>
                         </div>
 
                         <div className="mt-4 p-3 bg-slate-50 rounded-xl border border-slate-100">
                           <div className="text-[10px] text-slate-400 font-semibold uppercase">Extracted Text</div>
-                          <div className="font-mono font-bold text-slate-800 text-base mt-0.5">{entity.value}</div>
+                          <div className="font-mono font-bold text-slate-800 text-base mt-0.5">
+                            {hasVal ? entity.value : <span className="text-slate-400 font-sans italic font-normal text-xs">Waiting for vocal input...</span>}
+                          </div>
                         </div>
 
                         <div className="mt-3">
                           <div className="text-xs font-semibold text-slate-700 mb-1.5 flex items-center justify-between">
                             <span>NATO Breakdown:</span>
-                            <button
-                              onClick={() => speakReadBack(`${entity.label}: ${phonetics.map(p => p.code).join(' ')}`)}
-                              className="text-[11px] text-blue-600 hover:underline flex items-center space-x-0.5"
-                            >
-                              <Volume2 className="w-3 h-3" />
-                              <span>Audio</span>
-                            </button>
+                            {hasVal && (
+                              <button
+                                onClick={() => speakReadBack(`${entity.label}: ${phonetics.map(p => p.code).join(' ')}`)}
+                                className="text-[11px] text-emerald-700 hover:underline flex items-center space-x-0.5 cursor-pointer font-semibold"
+                              >
+                                <Volume2 className="w-3 h-3" />
+                                <span>Audio</span>
+                              </button>
+                            )}
                           </div>
                           <div className="flex flex-wrap gap-1 max-h-20 overflow-y-auto">
-                            {phonetics.slice(0, 8).map((p, i) => (
-                              <span key={i} className="text-[11px] px-1.5 py-0.5 bg-slate-100 rounded text-slate-700 font-mono">
-                                <strong>{p.char}</strong>:{p.code}
-                              </span>
-                            ))}
+                            {phonetics.length > 0 ? (
+                              phonetics.slice(0, 8).map((p, i) => (
+                                <span key={i} className="text-[11px] px-1.5 py-0.5 bg-slate-100 rounded text-slate-700 font-mono">
+                                  <strong>{p.char}</strong>:{p.code}
+                                </span>
+                              ))
+                            ) : (
+                              <span className="text-xs text-slate-400 italic">No breakdown captured</span>
+                            )}
                           </div>
                         </div>
                       </div>
@@ -1931,8 +2525,8 @@ export default function EchoTrustApp() {
                       <div className="mt-5 pt-4 border-t border-slate-100 flex items-center justify-between">
                         <div className="text-[11px] text-slate-400">Status: <strong className="text-slate-700 capitalize">{entity.status}</strong></div>
                         <div className="flex items-center space-x-2">
-                          <button onClick={() => initiateCorrection(entity)} className="px-2.5 py-1 text-xs font-semibold text-slate-600 hover:text-slate-900 border rounded-lg">Correct</button>
-                          <button onClick={() => handleConfirmEntity(entity.id)} className="px-3 py-1 text-xs font-bold bg-blue-600 hover:bg-blue-700 text-white rounded-lg">Confirm</button>
+                          <button onClick={() => initiateCorrection(entity)} className="px-2.5 py-1 text-xs font-semibold text-slate-600 hover:text-slate-900 border rounded-lg cursor-pointer">Correct</button>
+                          <button onClick={() => handleConfirmEntity(entity.id)} className="px-3 py-1 text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg cursor-pointer shadow-xs">Confirm</button>
                         </div>
                       </div>
                     </div>
@@ -1955,9 +2549,9 @@ export default function EchoTrustApp() {
                 <a
                   href={downloadComplianceCSVUrl(historySearch, historyStatusFilter)}
                   download="echotrust_compliance_audit.csv"
-                  className="px-3.5 py-2 text-xs font-semibold bg-white border border-slate-200 rounded-xl text-slate-700 hover:bg-slate-50 flex items-center space-x-1.5 shadow-2xs"
+                  className="px-3.5 py-2 text-xs font-semibold bg-white border border-slate-200 rounded-xl text-slate-700 hover:bg-slate-50 flex items-center space-x-1.5 shadow-2xs cursor-pointer"
                 >
-                  <Download className="w-3.5 h-3.5 text-blue-600" />
+                  <Download className="w-3.5 h-3.5 text-emerald-600" />
                   <span>Export Compliance CSV</span>
                 </a>
               </div>
@@ -1973,7 +2567,7 @@ export default function EchoTrustApp() {
                     onChange={(e) => setHistorySearch(e.target.value)}
                     onBlur={loadSessionsList}
                     onKeyDown={(e) => e.key === 'Enter' && loadSessionsList()}
-                    className="w-full border rounded-xl p-2 bg-slate-50 border-slate-200 focus:bg-white focus:ring-1 focus:ring-blue-500 outline-none"
+                    className="w-full border rounded-xl p-2 bg-slate-50 border-slate-200 focus:bg-white focus:ring-1 focus:ring-emerald-500 focus:border-emerald-500 outline-none"
                   />
                 </div>
                 <div>
@@ -2037,8 +2631,8 @@ export default function EchoTrustApp() {
                   </thead>
                   <tbody className="divide-y divide-slate-100">
                     {historyList.map((item) => (
-                      <tr key={item.id} className="hover:bg-slate-50/70 transition">
-                        <td className="p-3.5 font-mono font-bold text-blue-600">{item.id}</td>
+                      <tr key={item.id} className="hover:bg-emerald-50/30 transition">
+                        <td className="p-3.5 font-mono font-bold text-emerald-700">{item.id}</td>
                         <td className="p-3.5">
                           <div className="font-bold text-slate-900">{item.customer}</div>
                           <div className="text-[11px] text-slate-400 font-mono">{item.appNo}</div>
@@ -2061,7 +2655,7 @@ export default function EchoTrustApp() {
                         </td>
                         <td className="p-3.5">
                           <span className={`px-2.5 py-0.5 rounded-full text-[11px] font-semibold ${
-                            item.status === 'Verified' ? 'bg-emerald-100 text-emerald-800' : 'bg-blue-100 text-blue-800'
+                            item.status === 'Verified' ? 'bg-emerald-100 text-emerald-800' : 'bg-teal-50 text-teal-800 border border-teal-200'
                           }`}>
                             {item.status}
                           </span>
@@ -2070,7 +2664,7 @@ export default function EchoTrustApp() {
                         <td className="p-3.5 text-right">
                           <button
                             onClick={() => inspectSession(item)}
-                            className="text-blue-600 hover:text-blue-800 font-semibold p-1 hover:bg-blue-50 rounded"
+                            className="text-emerald-700 hover:text-emerald-900 font-semibold p-1 hover:bg-emerald-50 rounded cursor-pointer"
                           >
                             Audit Audio
                           </button>
@@ -2097,7 +2691,7 @@ export default function EchoTrustApp() {
                 {/* Confidence Thresholds */}
                 <div className="p-5 space-y-4">
                   <h3 className="font-bold text-slate-800 text-sm flex items-center space-x-2">
-                    <Sliders className="w-4 h-4 text-blue-600" />
+                    <Sliders className="w-4 h-4 text-emerald-600" />
                     <span>Confidence Threshold Gates</span>
                   </h3>
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
@@ -2108,7 +2702,7 @@ export default function EchoTrustApp() {
                           type="number"
                           value={autoPassThreshold}
                           onChange={(e) => setAutoPassThreshold(Number(e.target.value))}
-                          className="w-16 p-1.5 text-xs border rounded-lg bg-white font-bold"
+                          className="w-16 p-1.5 text-xs border rounded-lg bg-white font-bold outline-none focus:border-emerald-500"
                         />
                         <span className="text-xs text-slate-500">%</span>
                       </div>
@@ -2121,7 +2715,7 @@ export default function EchoTrustApp() {
                           type="number"
                           value={mandatoryGateThreshold}
                           onChange={(e) => setMandatoryGateThreshold(Number(e.target.value))}
-                          className="w-16 p-1.5 text-xs border rounded-lg bg-white font-bold"
+                          className="w-16 p-1.5 text-xs border rounded-lg bg-white font-bold outline-none focus:border-emerald-500"
                         />
                         <span className="text-xs text-slate-500">%</span>
                       </div>
@@ -2134,7 +2728,7 @@ export default function EchoTrustApp() {
                           type="number"
                           value={autoRejectThreshold}
                           onChange={(e) => setAutoRejectThreshold(Number(e.target.value))}
-                          className="w-16 p-1.5 text-xs border rounded-lg bg-white font-bold"
+                          className="w-16 p-1.5 text-xs border rounded-lg bg-white font-bold outline-none focus:border-emerald-500"
                         />
                         <span className="text-xs text-slate-500">%</span>
                       </div>
@@ -2146,26 +2740,26 @@ export default function EchoTrustApp() {
                 {/* Phonetic Standard */}
                 <div className="p-5 space-y-4">
                   <h3 className="font-bold text-slate-800 text-sm flex items-center space-x-2">
-                    <Radio className="w-4 h-4 text-indigo-600" />
+                    <Radio className="w-4 h-4 text-emerald-600" />
                     <span>Read-Back Phonetic Standardization</span>
                   </h3>
                   <div className="space-y-2">
                     <label onClick={() => setPhoneticStandard('nato')} className="flex items-center space-x-3 p-3 rounded-xl border border-slate-200 hover:bg-slate-50 cursor-pointer">
-                      <input type="radio" name="phoneticStd" checked={phoneticStandard === 'nato'} onChange={() => setPhoneticStandard('nato')} className="text-blue-600" />
+                      <input type="radio" name="phoneticStd" checked={phoneticStandard === 'nato'} onChange={() => setPhoneticStandard('nato')} className="text-emerald-600 focus:ring-emerald-500" />
                       <div>
                         <div className="text-xs font-bold text-slate-800">ICAO / NATO Phonetic Standard (Recommended)</div>
                         <div className="text-[11px] text-slate-500">Alpha, Bravo, Charlie, Delta, Romeo, Uniform... Global BFSI benchmark</div>
                       </div>
                     </label>
                     <label onClick={() => setPhoneticStandard('indian')} className="flex items-center space-x-3 p-3 rounded-xl border border-slate-200 hover:bg-slate-50 cursor-pointer">
-                      <input type="radio" name="phoneticStd" checked={phoneticStandard === 'indian'} onChange={() => setPhoneticStandard('indian')} className="text-blue-600" />
+                      <input type="radio" name="phoneticStd" checked={phoneticStandard === 'indian'} onChange={() => setPhoneticStandard('indian')} className="text-emerald-600 focus:ring-emerald-500" />
                       <div>
                         <div className="text-xs font-bold text-slate-800">Indian Banking Colloquial Standard</div>
                         <div className="text-[11px] text-slate-500">A for Apple, B for Bombay, C for Chennai, D for Delhi...</div>
                       </div>
                     </label>
                     <label onClick={() => setPhoneticStandard('numeric')} className="flex items-center space-x-3 p-3 rounded-xl border border-slate-200 hover:bg-slate-50 cursor-pointer">
-                      <input type="radio" name="phoneticStd" checked={phoneticStandard === 'numeric'} onChange={() => setPhoneticStandard('numeric')} className="text-blue-600" />
+                      <input type="radio" name="phoneticStd" checked={phoneticStandard === 'numeric'} onChange={() => setPhoneticStandard('numeric')} className="text-emerald-600 focus:ring-emerald-500" />
                       <div>
                         <div className="text-xs font-bold text-slate-800">Digit-Grouped Numeric Read-Back</div>
                         <div className="text-[11px] text-slate-500">Read in pairs (e.g., 98-76-54) or individual digits (9, 8, 7, 6, 5, 4)</div>
@@ -2184,7 +2778,7 @@ export default function EchoTrustApp() {
                       setPhoneticStandard('nato');
                       setAudioFeedbackNotice('Configuration reset to BFSI standard defaults.');
                     }}
-                    className="px-4 py-2 border rounded-xl text-xs font-semibold text-slate-600 hover:bg-slate-50"
+                    className="px-4 py-2 border rounded-xl text-xs font-semibold text-slate-600 hover:bg-slate-50 cursor-pointer"
                   >
                     Reset Defaults
                   </button>
@@ -2192,7 +2786,7 @@ export default function EchoTrustApp() {
                     onClick={() => {
                       setAudioFeedbackNotice('Configuration successfully saved to active verification cluster.');
                     }}
-                    className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold shadow-sm"
+                    className="px-4 py-2 bg-gradient-to-r from-emerald-600 via-teal-600 to-green-600 hover:from-emerald-500 hover:to-green-500 text-white rounded-xl text-xs font-bold shadow-md shadow-emerald-600/20 transition cursor-pointer"
                   >
                     Save Configuration
                   </button>
@@ -2201,25 +2795,6 @@ export default function EchoTrustApp() {
             </div>
           )}
         </main>
-
-        {/* EchoTrust Enterprise Footer */}
-        <footer className="mt-auto border-t border-slate-200/80 bg-white/80 backdrop-blur-sm py-4 px-4 sm:px-6 lg:px-8">
-          <div className="max-w-7xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-slate-500">
-            <div className="flex items-center space-x-2">
-              <span className="font-bold text-slate-800">EchoTrust™</span>
-              <span className="text-slate-300">•</span>
-              <span className="font-medium text-slate-600">Every Voice. Verified with Trust.</span>
-            </div>
-            <div className="flex items-center space-x-4 text-[11px]">
-              <span className="text-slate-400">Enterprise BFSI Voice Platform</span>
-              <span className="text-slate-300">•</span>
-              <span className="flex items-center space-x-1.5 text-emerald-600 font-semibold">
-                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-                <span>Active Trust Protection</span>
-              </span>
-            </div>
-          </div>
-        </footer>
       </div>
 
       {/* =========================================================
@@ -2235,7 +2810,7 @@ export default function EchoTrustApp() {
               </div>
               <button
                 onClick={() => setIsCorrecting(false)}
-                className="text-slate-400 hover:text-slate-600 p-1"
+                className="text-slate-400 hover:text-slate-600 p-1 cursor-pointer"
               >
                 <X className="w-5 h-5" />
               </button>
@@ -2264,20 +2839,20 @@ export default function EchoTrustApp() {
                   type="text"
                   value={correctionInput}
                   onChange={(e) => setCorrectionInput(e.target.value)}
-                  className="mt-1 w-full border border-slate-300 rounded-xl p-2.5 text-sm font-semibold focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                  className="mt-1 w-full border border-slate-300 rounded-xl p-2.5 text-sm font-semibold focus:ring-2 focus:ring-emerald-500 focus:outline-none"
                   placeholder="e.g. Rahul Sharma"
                 />
               </div>
 
               {/* Dynamic Live Phonetic Preview */}
               {correctionInput && (
-                <div className="bg-blue-50/70 p-3 rounded-xl border border-blue-100">
-                  <div className="text-[11px] font-semibold text-blue-900 mb-1">
+                <div className="bg-emerald-50/70 p-3 rounded-xl border border-emerald-100">
+                  <div className="text-[11px] font-semibold text-emerald-900 mb-1">
                     Live Phonetic Read-Back Preview:
                   </div>
-                  <div className="flex flex-wrap gap-1 text-[11px] text-blue-800 font-mono">
+                  <div className="flex flex-wrap gap-1 text-[11px] text-emerald-800 font-mono">
                     {getPhoneticSpelling(correctionInput).map((item, idx) => (
-                      <span key={idx} className="bg-white px-1.5 py-0.5 rounded-md shadow-2xs border border-blue-200">
+                      <span key={idx} className="bg-white px-1.5 py-0.5 rounded-md shadow-2xs border border-emerald-200">
                         <strong>{item.char}</strong>-{item.code}
                       </span>
                     ))}
@@ -2289,13 +2864,13 @@ export default function EchoTrustApp() {
             <div className="mt-6 pt-4 border-t border-slate-100 flex items-center justify-end space-x-3">
               <button
                 onClick={() => setIsCorrecting(false)}
-                className="px-4 py-2 border rounded-xl text-xs font-semibold text-slate-600 hover:bg-slate-50"
+                className="px-4 py-2 border rounded-xl text-xs font-semibold text-slate-600 hover:bg-slate-50 cursor-pointer"
               >
                 Cancel
               </button>
               <button
                 onClick={submitCorrection}
-                className="px-5 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold shadow-md shadow-blue-500/20 flex items-center space-x-1.5"
+                className="px-5 py-2 bg-gradient-to-r from-emerald-600 via-teal-600 to-green-600 hover:from-emerald-500 hover:to-green-500 text-white rounded-xl text-xs font-bold shadow-md shadow-emerald-600/20 flex items-center space-x-1.5 transition cursor-pointer"
               >
                 <Check className="w-4 h-4" />
                 <span>Save & Synthesize Read-Back</span>
@@ -2305,5 +2880,121 @@ export default function EchoTrustApp() {
         </div>
       )}
     </div>
+  );
+}
+
+// =========================================================
+// MAIN APP COMPONENT (Application Flow & Session Controller)
+// Landing Page → Login/Register → Authentication → Dashboard
+// =========================================================
+export default function App() {
+  const [currentView, setCurrentView] = useState('landing'); // Always start on Landing Page!
+  const [token, setToken] = useState(() => {
+    return localStorage.getItem('echotrust_token') || sessionStorage.getItem('echotrust_token') || '';
+  });
+  const [user, setUser] = useState(() => {
+    try {
+      const stored = localStorage.getItem('echotrust_user') || sessionStorage.getItem('echotrust_user');
+      return stored ? JSON.parse(stored) : null;
+    } catch {
+      return null;
+    }
+  });
+
+  // Verify and refresh session on load if token is stored
+  useEffect(() => {
+    if (token) {
+      fetchCurrentUser(token)
+        .then(res => {
+          if (res && res.user) {
+            setUser(res.user);
+          }
+        })
+        .catch(() => {
+          // Token invalid or expired
+          localStorage.removeItem('echotrust_token');
+          localStorage.removeItem('echotrust_user');
+          sessionStorage.removeItem('echotrust_token');
+          sessionStorage.removeItem('echotrust_user');
+          setToken('');
+          setUser(null);
+        });
+    }
+  }, [token]);
+
+  const handleNavigate = (view) => {
+    if (view === 'dashboard' && !user && !token) {
+      setCurrentView('login');
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+      return;
+    }
+    setCurrentView(view);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  const handleLoginSuccess = (newToken, newUser, rememberMe = true) => {
+    setToken(newToken);
+    setUser(newUser);
+    const storage = rememberMe ? localStorage : sessionStorage;
+    storage.setItem('echotrust_token', newToken);
+    storage.setItem('echotrust_user', JSON.stringify(newUser));
+    setCurrentView('dashboard');
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  const handleLogout = () => {
+    localStorage.removeItem('echotrust_token');
+    localStorage.removeItem('echotrust_user');
+    sessionStorage.removeItem('echotrust_token');
+    sessionStorage.removeItem('echotrust_user');
+    setToken('');
+    setUser(null);
+    setCurrentView('landing');
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  if (currentView === 'login') {
+    return (
+      <LoginPage 
+        onNavigate={handleNavigate} 
+        onLoginSuccess={handleLoginSuccess} 
+      />
+    );
+  }
+
+  if (currentView === 'register') {
+    return (
+      <RegisterPage 
+        onNavigate={handleNavigate} 
+        onLoginSuccess={handleLoginSuccess} 
+      />
+    );
+  }
+
+  if (currentView === 'dashboard') {
+    if (!user && !token) {
+      return (
+        <LoginPage 
+          onNavigate={handleNavigate} 
+          onLoginSuccess={handleLoginSuccess} 
+        />
+      );
+    }
+    return (
+      <EchoTrustDashboard 
+        user={user} 
+        onLogout={handleLogout} 
+        onGoHome={() => handleNavigate('landing')} 
+      />
+    );
+  }
+
+  // Default: Landing Page is always the first page visitors see!
+  return (
+    <LandingPage 
+      onNavigate={handleNavigate} 
+      user={user} 
+      onLogout={handleLogout} 
+    />
   );
 }

@@ -27,14 +27,18 @@ class Settings:
     # SQLite fallback path if Supabase is not configured
     SQLITE_DB_PATH: str = str(Path(__file__).resolve().parent / "verivoice.db")
     
-    # EchoTrust Voice STT Credentials (backward-compatible with GNANI_*)
-    GNANI_API_KEY: str = os.getenv("ECHOTRUST_API_KEY", os.getenv("GNANI_API_KEY", ""))
-    GNANI_TOKEN: str = os.getenv("ECHOTRUST_TOKEN", os.getenv("GNANI_TOKEN", ""))
-    GNANI_ACCESS_TOKEN: str = os.getenv("ECHOTRUST_ACCESS_TOKEN", os.getenv("GNANI_ACCESS_TOKEN", ""))
-    GNANI_CUSTOMER_ID: str = os.getenv("ECHOTRUST_CUSTOMER_ID", os.getenv("GNANI_CUSTOMER_ID", "ApexBank-BFSI"))
-    GNANI_LANG_CODE: str = os.getenv("ECHOTRUST_LANG_CODE", os.getenv("GNANI_LANG_CODE", "en-IN"))
-    GNANI_MODEL: str = os.getenv("ECHOTRUST_MODEL", os.getenv("GNANI_MODEL", "prisma-v3.0"))
-    GNANI_STT_ENDPOINT: str = os.getenv("ECHOTRUST_STT_ENDPOINT", os.getenv("GNANI_STT_ENDPOINT", "https://api.vachana.ai/stt/v3"))
+    # EchoTrust / Gnani AI STT & TTS Credentials
+    GNANI_API_KEY: str = os.getenv("GNANI_API_KEY", os.getenv("ECHOTRUST_API_KEY", ""))
+    GNANI_TOKEN: str = os.getenv("GNANI_TOKEN", os.getenv("ECHOTRUST_TOKEN", ""))
+    GNANI_ACCESS_TOKEN: str = os.getenv("GNANI_ACCESS_TOKEN", os.getenv("ECHOTRUST_ACCESS_TOKEN", ""))
+    GNANI_CUSTOMER_ID: str = os.getenv("GNANI_CUSTOMER_ID", os.getenv("ECHOTRUST_CUSTOMER_ID", "ApexBank-BFSI"))
+    GNANI_LANG_CODE: str = os.getenv("GNANI_LANG_CODE", "hi-IN")
+    GNANI_MODEL: str = os.getenv("GNANI_MODEL", "prisma-v3.0")
+    GNANI_STT_API_URL: str = os.getenv("GNANI_STT_API_URL", os.getenv("GNANI_STT_ENDPOINT", "https://api.vachana.ai/stt/v3"))
+    GNANI_STT_ENDPOINT: str = GNANI_STT_API_URL
+    GNANI_TTS_API_URL: str = os.getenv("GNANI_TTS_API_URL", "https://api.vachana.ai")
+    GNANI_TTS_MODEL: str = os.getenv("GNANI_TTS_MODEL", "timbre-v3.0")
+    GNANI_TTS_VOICE: str = os.getenv("GNANI_TTS_VOICE", "Shivani")
     
     # Verification & Confidence Thresholds
     THRESHOLD_HIGH: float = float(os.getenv("THRESHOLD_HIGH", "90.0"))
@@ -45,6 +49,11 @@ class Settings:
     
     # Phonetic Standard: "nato" | "indian" | "digit_grouped"
     PHONETIC_STANDARD: str = os.getenv("PHONETIC_STANDARD", "nato")
+
+    # JWT Authentication Configuration
+    JWT_SECRET: str = os.getenv("JWT_SECRET", "echotrust-enterprise-jwt-super-secret-key-2025-bfsi-token-998877")
+    JWT_ALGORITHM: str = "HS256"
+    JWT_EXPIRE_DAYS: int = 7
 
 settings = Settings()
 
