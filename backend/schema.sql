@@ -38,6 +38,8 @@ CREATE TABLE IF NOT EXISTS verification_sessions (
     duration_secs INT DEFAULT 0,
     officer_id TEXT REFERENCES users(id) ON DELETE SET NULL,
     dialogue_log JSONB DEFAULT '[]'::jsonb,
+    verification_summary TEXT,
+    active_target_id TEXT,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );

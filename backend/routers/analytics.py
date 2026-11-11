@@ -1,102 +1,107 @@
-import io
 import csv
-from fastapi import APIRouter, Query, Response
-from typing import Optional
+import io
+from typing import Dict, Any
+from fastapi import APIRouter, Depends
+from fastapi.responses import StreamingResponse
 from backend.database import db
+from backend.routers.auth import get_current_user
 from backend.services.correction_learner import correction_learner
+from backend.services.gnani_stt import gnani_stt
+from backend.services.tts_service import tts_service
+from backend.services.llm_service import llm_service
 
 router = APIRouter(prefix="/api/analytics", tags=["Analytics & Reporting"])
 
+
 @router.get("/dashboard")
-def get_dashboard_metrics():
+def get_dashboard_analytics(current_user: Dict[str, Any] = Depends(get_current_user)):
+    """
+    Returns real-time dashboard metrics calculated directly from database rows
+    plus live service statuses (API, STT, TTS, LLM, Database).
+    """
     stats = db.get_dashboard_stats()
-    return stats
-
-@router.get("/summary")
-def get_detailed_analytics():
-    stats = db.get_dashboard_stats()
-    ml_status = correction_learner.fit_from_logs()
-    
-    # Frequency of corrections by entity from actual logs
-    logs = db.get_correction_logs(limit=200)
-    ent_corrections = {"name": 0, "phone": 0, "address": 0, "account": 0, "dob": 0, "id_doc": 0}
-    for l in logs:
-        t = l.get("entity_type", "")
-        if t in ent_corrections:
-            ent_corrections[t] += 1
-            
-    # Chart data for Most Frequently Corrected Entity Types
-    corrections_chart = [
-        {"entity": "Full Name", "corrections": ent_corrections["name"] + 34, "autoConfirmed": 240},
-        {"entity": "Address", "corrections": ent_corrections["address"] + 52, "autoConfirmed": 180},
-        {"entity": "Bank Account", "corrections": ent_corrections["account"] + 21, "autoConfirmed": 290},
-        {"entity": "Phone Number", "corrections": ent_corrections["phone"] + 9, "autoConfirmed": 320},
-        {"entity": "PAN / Tax", "corrections": ent_corrections["id_doc"] + 29, "autoConfirmed": 210},
-        {"entity": "DOB", "corrections": ent_corrections["dob"] + 4, "autoConfirmed": 350},
-    ]
-
-    # Chart data for Confidence Score Distribution
-    confidence_distribution = [
-        {"bracket": "Below 60%", "count": 45},
-        {"bracket": "60–70%", "count": 120},
-        {"bracket": "70–80%", "count": 340},
-        {"bracket": "80–95%", "count": 1420},
-        {"bracket": "90–95%", "count": 2450},
-        {"bracket": "95–100%", "count": 4120},
-    ]
-
     return {
-        "kpi": {
-            "first_attempt_rate": "89.4%",
-            "first_attempt_improvement": "+2.3%",
-            "first_attempt_note": "Direct verbal match rate",
-            "correction_recovery_rate": "97.8%",
-            "correction_recovery_status": "Resolved within 1 loop",
-            "correction_recovery_note": "Phonetic disambiguation",
-            "average_time_secs": "42.6 sec",
-            "average_time_improvement": "-0.8 sec",
-            "average_time_note": "Across 6 BFSI entities",
-            "fraud_prevention_cases": "323 cases",
-            "fraud_prevention_improvement": "+12%",
-            "fraud_prevention_note": "Policy dispatch risk eliminated"
+        **stats,
+        "services": {
+            "database": db.check_health(),
+            "stt": gnani_stt.get_status(),
+            "tts": tts_service.get_status(),
+            "llm": llm_service.get_status(),
         },
-        "corrections_by_entity_chart": corrections_chart,
-        "confidence_distribution_chart": confidence_distribution,
-        "ml_model_insights": ml_status
     }
 
+
+@router.get("/summary")
+def get_analytics_summary(current_user: Dict[str, Any] = Depends(get_current_user)):
+    """Returns real-data Analytics dashboard metrics, charts, and ML correction status."""
+    stats = db.get_dashboard_stats()
+    charts = db.get_real_chart_metrics()
+    model_status = correction_learner.fit_from_logs()
+    return {
+        "dashboard_stats": stats,
+        "corrections_by_entity_chart": charts["corrections_by_entity_chart"],
+        "confidence_distribution_chart": charts["confidence_distribution_chart"],
+        "ml_learning_status": model_status,
+        "services": {
+            "database": db.check_health(),
+            "stt": gnani_stt.get_status(),
+            "tts": tts_service.get_status(),
+            "llm": llm_service.get_status(),
+        },
+    }
+
+
+@router.get("/correction-logs")
+def get_correction_logs(
+    limit: int = 100,
+    current_user: Dict[str, Any] = Depends(get_current_user),
+):
+    logs = db.get_correction_logs(limit=limit)
+    model_status = correction_learner.fit_from_logs()
+    return {
+        "logs": logs,
+        "count": len(logs),
+        "model_status": model_status,
+    }
+
+
 @router.get("/export-csv")
-def export_compliance_csv(search: Optional[str] = "", status: Optional[str] = ""):
-    sessions = db.get_sessions(search=search or "", status=status or "", limit=500)
-    
+def export_compliance_csv(current_user: Dict[str, Any] = Depends(get_current_user)):
+    """Generates and streams an authentic RBI BFSI compliance CSV directly from database records."""
+    sessions = db.get_sessions(limit=250)
     output = io.StringIO()
     writer = csv.writer(output)
     writer.writerow([
-        "Session ID", "Customer Name", "Customer ID", "Application No",
-        "Channel", "Status", "Entity Count", "Initial Confidence", "Final Confidence",
-        "Corrections Count", "Duration Seconds", "Created At"
+        "Session ID",
+        "Customer Name",
+        "Customer Code",
+        "Application No",
+        "Channel",
+        "Status",
+        "Initial Conf (%)",
+        "Final Conf (%)",
+        "Corrections Count",
+        "Verification Summary",
+        "Updated At",
     ])
-    
     for s in sessions:
         writer.writerow([
-            s.get("id"),
-            s.get("customer_name") or "Rahul Sharma",
-            s.get("customer_id") or "CUST-8021",
-            s.get("app_no"),
-            s.get("channel"),
-            s.get("status"),
-            s.get("entity_count"),
-            s.get("initial_conf"),
-            s.get("final_conf"),
-            s.get("corrections"),
-            s.get("duration_secs"),
-            s.get("created_at")
+            s.get("id", ""),
+            s.get("customer_name", ""),
+            s.get("customer_code", s.get("customer_id", "")),
+            s.get("app_no", ""),
+            s.get("channel", ""),
+            s.get("status", ""),
+            s.get("initial_conf", 0.0),
+            s.get("final_conf", 0.0),
+            s.get("corrections", 0),
+            s.get("verification_summary", ""),
+            s.get("updated_at", ""),
         ])
-        
-    csv_content = output.getvalue()
-    return Response(
-        content=csv_content,
-        media_type="text/csv",
-        headers={"Content-Disposition": "attachment; filename=echotrust_compliance_audit.csv"}
-    )
 
+    output.seek(0)
+    return StreamingResponse(
+        iter([output.getvalue()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=echotrust_compliance_audit.csv"},
+    )

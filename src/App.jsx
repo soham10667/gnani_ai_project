@@ -6,27 +6,30 @@ import {
   History, LayoutDashboard, Radio, Play, Pause, RotateCcw, Check, X,
   Sliders, Bell, Download, ExternalLink, HelpCircle, Sparkles, Building,
   Layers, Lock, Eye, AlertCircle, Info, ChevronDown, Clock, Timer, ShieldAlert,
-  Menu, ChevronUp, Zap, CheckCircle, LogOut, Home
+  Menu, ChevronUp, Zap, CheckCircle, LogOut, Home, Mail, Wallet, Activity, Cpu,
+  Server, MessageSquare
 } from 'lucide-react';
 import {
   AreaChart, Area, BarChart, Bar, LineChart, Line, PieChart, Pie, Cell,
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend
 } from 'recharts';
 import {
+  fetchHealthAPI,
   fetchDashboardMetrics,
   fetchDetailedAnalytics,
   fetchSessions,
   fetchSessionDetails,
+  createSession,
+  updateSession,
   transcribeAudioBlob,
   transcribeSampleAudioAPI,
   processDialogueAPI,
   fetchVoiceStatusAPI,
   synthesizeSpeechAPI,
-  getTTSAudioUrl,
   extractEntitiesFromText,
   confirmEntityAPI,
   correctEntityAPI,
-  downloadComplianceCSVUrl,
+  downloadComplianceCSV,
   fetchCurrentUser
 } from './api';
 import LandingPage from './components/LandingPage';
@@ -57,9 +60,11 @@ const INDIAN_BANKING_PHONETIC = {
 const ENTITY_ICONS = {
   name: User,
   phone: Phone,
+  email: Mail,
   address: MapPin,
-  account: CreditCard,
+  amount: Wallet,
   dob: Calendar,
+  account: CreditCard,
   id_doc: FileText
 };
 
@@ -70,7 +75,7 @@ const INITIAL_ENTITIES = [
     value: '',
     type: 'alpha',
     confidence: 0,
-    status: 'waiting', // 'waiting', 'pending', 'verified', 'corrected', 'flagged'
+    status: 'waiting',
     history: [],
     phoneticSummary: 'Waiting for vocal input...',
     icon: User,
@@ -89,6 +94,18 @@ const INITIAL_ENTITIES = [
     verifiedAt: null
   },
   {
+    id: 'email',
+    label: 'Email Address',
+    value: '',
+    type: 'email',
+    confidence: 0,
+    status: 'waiting',
+    history: [],
+    phoneticSummary: 'Waiting for vocal input...',
+    icon: Mail,
+    verifiedAt: null
+  },
+  {
     id: 'address',
     label: 'Residential Address',
     value: '',
@@ -101,15 +118,15 @@ const INITIAL_ENTITIES = [
     verifiedAt: null
   },
   {
-    id: 'account',
-    label: 'Account Number',
+    id: 'amount',
+    label: 'Amount (INR)',
     value: '',
-    type: 'numeric',
+    type: 'amount',
     confidence: 0,
     status: 'waiting',
     history: [],
     phoneticSummary: 'Waiting for vocal input...',
-    icon: CreditCard,
+    icon: Wallet,
     verifiedAt: null
   },
   {
@@ -122,6 +139,18 @@ const INITIAL_ENTITIES = [
     history: [],
     phoneticSummary: 'Waiting for vocal input...',
     icon: Calendar,
+    verifiedAt: null
+  },
+  {
+    id: 'account',
+    label: 'Account Number',
+    value: '',
+    type: 'numeric',
+    confidence: 0,
+    status: 'waiting',
+    history: [],
+    phoneticSummary: 'Waiting for vocal input...',
+    icon: CreditCard,
     verifiedAt: null
   },
   {
@@ -138,73 +167,7 @@ const INITIAL_ENTITIES = [
   }
 ];
 
-const HISTORICAL_SESSIONS = [
-  {
-    id: 'SES-94812',
-    customer: 'Rahul Sharma',
-    customerId: 'CUST-8021',
-    appNo: 'LOAN-2025-881',
-    entityCount: 6,
-    initialConf: 82,
-    finalConf: 96,
-    corrections: 1,
-    status: 'In Progress',
-    time: 'Today, 10:45 AM',
-    channel: 'Inbound IVR'
-  },
-  {
-    id: 'SES-94811',
-    customer: 'Priya Narang',
-    customerId: 'CUST-7944',
-    appNo: 'INS-HLT-904',
-    entityCount: 5,
-    initialConf: 94,
-    finalConf: 99,
-    corrections: 0,
-    status: 'Verified',
-    time: 'Today, 09:30 AM',
-    channel: 'Agent Voice Stream'
-  },
-  {
-    id: 'SES-94808',
-    customer: 'Amitabh Sen',
-    customerId: 'CUST-7210',
-    appNo: 'CC-PREM-412',
-    entityCount: 6,
-    initialConf: 69,
-    finalConf: 95,
-    corrections: 3,
-    status: 'Verified',
-    time: 'Yesterday, 04:15 PM',
-    channel: 'Inbound IVR'
-  },
-  {
-    id: 'SES-94799',
-    customer: 'Sneha Kulkarni',
-    customerId: 'CUST-6891',
-    appNo: 'MORTG-7721',
-    entityCount: 6,
-    initialConf: 58,
-    finalConf: 64,
-    corrections: 2,
-    status: 'Rejected',
-    time: 'Yesterday, 02:40 PM',
-    channel: 'Web RTC'
-  },
-  {
-    id: 'SES-94782',
-    customer: 'David George',
-    customerId: 'CUST-6502',
-    appNo: 'SAV-ACC-119',
-    entityCount: 4,
-    initialConf: 91,
-    finalConf: 98,
-    corrections: 0,
-    status: 'Verified',
-    time: '24 May, 11:20 AM',
-    channel: 'Inbound IVR'
-  }
-];
+const HISTORICAL_SESSIONS = [];
 
 // Modern EchoTrust Brand Logo Component (Resonant Sound-Wave & Trust Shield - Emerald Edition)
 function EchoTrustLogo({ className = "w-6 h-6" }) {
@@ -258,18 +221,21 @@ function EchoTrustDashboard({ user, onLogout, onGoHome }) {
   const [correctionTarget, setCorrectionTarget] = useState(null);
   const [correctionInput, setCorrectionInput] = useState('');
   const [audioFeedbackNotice, setAudioFeedbackNotice] = useState('');
-  const [selectedSttLanguage, setSelectedSttLanguage] = useState('hi-IN'); // 'hi-IN' (Hindi/Hinglish) or 'en-IN' (English/Hinglish)
-  const [sttEngineStatus, setSttEngineStatus] = useState('Gnani Prisma-v3.0 (hi-IN)');
-  const [selectedTtsVoice, setSelectedTtsVoice] = useState('Shivani'); // Reference audio tone match (Shivani Indian Female Tone)
+  const [errorBanner, setErrorBanner] = useState('');
+  const [verificationSummary, setVerificationSummary] = useState('');
+  const [selectedSttLanguage, setSelectedSttLanguage] = useState('indic-auto'); // 'indic-auto' (Hindi + English + Hinglish)
+  const [sttEngineStatus, setSttEngineStatus] = useState('Gnani Prisma-v3.0 (indic-auto)');
+  const [selectedTtsVoice, setSelectedTtsVoice] = useState('Devansh'); // Selected conversational Indian Male Hinglish tone (Timbre v3.0)
   const [selectedTtsModel, setSelectedTtsModel] = useState('timbre-v3.0');
   const [voiceApiStatus, setVoiceApiStatus] = useState(null);
+  const [healthStatus, setHealthStatus] = useState(null);
 
   // Real-time audio waveform visualizer bars (22 frequency slots)
   const [audioWaveformHeights, setAudioWaveformHeights] = useState(
     [35, 60, 20, 85, 95, 45, 100, 70, 40, 90, 65, 30, 80, 50, 25, 90, 40, 75, 30, 60, 85, 20]
   );
   
-  // Web Audio Context & MediaRecorder Refs
+  // Web Audio Context, MediaRecorder & Barge-In Monitor Refs
   const mediaRecorderRef = useRef(null);
   const audioChunksRef = useRef([]);
   const audioContextRef = useRef(null);
@@ -278,7 +244,13 @@ function EchoTrustDashboard({ user, onLogout, onGoHome }) {
   const streamRef = useRef(null);
   const activeAudioRef = useRef(null);
   const audioAnimationIntervalRef = useRef(null);
-  const currentPlaybackIdRef = useRef(0); // Sequence token to guarantee strict single-audio stream and zero overlaps
+  const currentPlaybackIdRef = useRef(0);
+  const bargeInStreamRef = useRef(null);
+  const bargeInCtxRef = useRef(null);
+  const bargeInRafRef = useRef(null);
+  const creatingSessionPromiseRef = useRef(null);
+  const currentSessionIdRef = useRef('');
+  const activeTargetIdRef = useRef('name');
 
   // Full Automation (Autonomous Voice Loop) State & Refs
   const [isAutonomousMode, setIsAutonomousMode] = useState(true);
@@ -294,10 +266,10 @@ function EchoTrustDashboard({ user, onLogout, onGoHome }) {
   const [mandatoryGateThreshold, setMandatoryGateThreshold] = useState(75);
   const [autoRejectThreshold, setAutoRejectThreshold] = useState(60);
 
-  // Dashboard & History live backend state
+  // Dashboard & History live backend state (zero fake numbers)
   const [dashboardStats, setDashboardStats] = useState(null);
-  const [recentSessions, setRecentSessions] = useState(HISTORICAL_SESSIONS);
-  const [historyList, setHistoryList] = useState(HISTORICAL_SESSIONS);
+  const [recentSessions, setRecentSessions] = useState([]);
+  const [historyList, setHistoryList] = useState([]);
   const [historySearch, setHistorySearch] = useState('');
   const [historyStatusFilter, setHistoryStatusFilter] = useState('All Statuses');
   const [historyChannelFilter, setHistoryChannelFilter] = useState('All Channels');
@@ -306,13 +278,106 @@ function EchoTrustDashboard({ user, onLogout, onGoHome }) {
   // Real-time dialogue log (starts empty, only displays real speech / typed input)
   const [dialogue, setDialogue] = useState([]);
 
-  // Load live data from Backend API on mount & tab changes
   useEffect(() => {
+    currentSessionIdRef.current = currentSessionId;
+  }, [currentSessionId]);
+
+  useEffect(() => {
+    if (activeEntityIndex !== null && entities[activeEntityIndex]) {
+      activeTargetIdRef.current = entities[activeEntityIndex].id;
+    }
+  }, [activeEntityIndex, entities]);
+
+  const hydrateSessionFromBackend = (sessionData) => {
+    if (!sessionData) return;
+    const s = sessionData.session || sessionData;
+    const sid = s.id || s.session_id || '';
+    if (sid) {
+      setCurrentSessionId(sid);
+      currentSessionIdRef.current = sid;
+      try { sessionStorage.setItem('echotrust_active_session_id', sid); } catch (e) {}
+    }
+    if (s.customer_name && s.customer_name !== 'Pending Identification' && s.customer_name !== 'New Applicant') {
+      setCustomerName(s.customer_name);
+    }
+    if (s.customer_code || s.customer_id) setCustomerId(s.customer_code || s.customer_id);
+    if (s.app_no) setAppNo(s.app_no);
+    if (s.verification_summary) setVerificationSummary(s.verification_summary);
+
+    const dbEntities = Array.isArray(s.entities) ? s.entities : [];
+    if (dbEntities.length > 0) {
+      setEntities(INITIAL_ENTITIES.map(base => {
+        const match = dbEntities.find(de => (de.entity_type || de.id) === base.id);
+        if (!match) return { ...base };
+        return {
+          ...base,
+          value: match.value || '',
+          confidence: Math.round(match.confidence || 0),
+          status: match.status || 'waiting',
+          history: match.history || (match.value ? [match.value] : []),
+          phoneticSummary: match.phonetic_summary || match.phoneticSummary || 'Waiting for vocal input...',
+          verifiedAt: match.verified_at || match.verifiedAt || null,
+        };
+      }));
+    }
+
+    const logs = Array.isArray(s.dialogue_log) ? s.dialogue_log : [];
+    if (logs.length > 0) {
+      setDialogue(logs.map((m, idx) => ({
+        id: m.id || `msg-${idx}`,
+        sender: m.sender === 'customer' ? 'user' : m.sender,
+        text: m.text || '',
+        phonetic: m.action === 'confirm_entity',
+        time: m.timestamp ? new Date(m.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '',
+      })));
+    }
+
+    if (s.active_target_id) {
+      activeTargetIdRef.current = s.active_target_id;
+      const targetIdx = INITIAL_ENTITIES.findIndex(e => e.id === s.active_target_id);
+      setActiveEntityIndex(targetIdx !== -1 ? targetIdx : null);
+    }
+  };
+
+  const recoverActiveSession = async () => {
+    try {
+      const savedSid = sessionStorage.getItem('echotrust_active_session_id');
+      if (savedSid) {
+        const details = await fetchSessionDetails(savedSid);
+        if (details && details.id && details.status === 'In Progress') {
+          hydrateSessionFromBackend(details);
+        } else if (details && details.status !== 'In Progress') {
+          sessionStorage.removeItem('echotrust_active_session_id');
+        }
+      }
+    } catch (e) {
+      try { sessionStorage.removeItem('echotrust_active_session_id'); } catch (err) {}
+    }
+  };
+
+  const loadHealthStatus = async () => {
+    const h = await fetchHealthAPI();
+    if (h) setHealthStatus(h);
+  };
+
+  // Load live data from Backend API on mount & tab changes + auto-recovery
+  useEffect(() => {
+    loadHealthStatus();
+    recoverActiveSession();
     loadDashboardData();
     loadAnalyticsData();
     loadSessionsList();
     loadVoiceStatus();
   }, []);
+
+  useEffect(() => {
+    if (activeTab !== 'dashboard') return;
+    const poll = setInterval(() => {
+      loadDashboardData();
+      loadHealthStatus();
+    }, 10000);
+    return () => clearInterval(poll);
+  }, [activeTab]);
 
   const loadVoiceStatus = async () => {
     try {
@@ -331,6 +396,7 @@ function EchoTrustDashboard({ user, onLogout, onGoHome }) {
   useEffect(() => {
     if (activeTab === 'dashboard') {
       loadDashboardData();
+      loadHealthStatus();
     } else if (activeTab === 'history' || activeTab === 'audit_logs') {
       loadSessionsList();
     } else if (activeTab === 'analytics') {
@@ -343,25 +409,28 @@ function EchoTrustDashboard({ user, onLogout, onGoHome }) {
       const data = await fetchDashboardMetrics();
       if (data) {
         setDashboardStats(data);
-        if (data.recent_sessions && data.recent_sessions.length > 0) {
+        if (data.services) {
+          setHealthStatus(prev => ({ ...(prev || { backend: { connected: true, status: 'Online' } }), ...data.services }));
+        }
+        if (Array.isArray(data.recent_sessions)) {
           const mapped = data.recent_sessions.map(s => ({
             id: s.id,
-            customer: s.customer || s.customer_name || 'Rahul Sharma',
-            customerId: s.customerId || s.customer_id || 'CUST-8021',
+            customer: s.customer || s.customer_name || 'Pending Identification',
+            customerId: s.customerId || s.customer_id || '',
             appNo: s.app_no,
-            entityCount: s.entity_count || 6,
-            initialConf: Math.round(s.initial_conf || 80),
-            finalConf: Math.round(s.final_conf || 95),
+            entityCount: s.entity_count || 8,
+            initialConf: Math.round(s.initial_conf || 0),
+            finalConf: Math.round(s.final_conf || 0),
             corrections: s.corrections || 0,
-            status: s.status || 'Verified',
-            time: 'Today, ' + new Date(s.created_at || Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-            channel: s.channel || 'Inbound IVR'
+            status: s.status || 'In Progress',
+            time: new Date(s.updated_at || s.created_at || Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+            channel: s.channel || 'Automated Voice Agent'
           }));
           setRecentSessions(mapped);
         }
       }
     } catch (err) {
-      console.warn('Dashboard API fallback to local state:', err);
+      setErrorBanner(`Dashboard sync error: ${err.message || 'Backend unreachable'}`);
     }
   };
 
@@ -375,21 +444,21 @@ function EchoTrustDashboard({ user, onLogout, onGoHome }) {
       if (data && data.sessions) {
         const mapped = data.sessions.map(s => ({
           id: s.id,
-          customer: s.customer_name || s.customer || 'Rahul Sharma',
-          customerId: s.customer_code || s.customer_id || 'CUST-8021',
+          customer: s.customer_name || s.customer || 'Pending Identification',
+          customerId: s.customer_code || s.customer_id || '',
           appNo: s.app_no,
-          entityCount: s.entity_count || 6,
-          initialConf: Math.round(s.initial_conf || 80),
-          finalConf: Math.round(s.final_conf || 95),
+          entityCount: s.entity_count || 8,
+          initialConf: Math.round(s.initial_conf || 0),
+          finalConf: Math.round(s.final_conf || 0),
           corrections: s.corrections || 0,
-          status: s.status || 'Verified',
-          time: new Date(s.created_at || Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-          channel: s.channel || 'Inbound IVR'
+          status: s.status || 'In Progress',
+          time: new Date(s.updated_at || s.created_at || Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          channel: s.channel || 'Automated Voice Agent'
         }));
         setHistoryList(mapped);
       }
     } catch (err) {
-      console.warn('Sessions list API fallback to local state:', err);
+      console.warn('Sessions list API error:', err);
     }
   };
 
@@ -400,37 +469,26 @@ function EchoTrustDashboard({ user, onLogout, onGoHome }) {
         setAnalyticsData(data);
       }
     } catch (err) {
-      console.warn('Analytics API fallback:', err);
+      console.warn('Analytics API error:', err);
     }
   };
 
-  // Switch session into Live Verification
+  // Switch session into Live Verification (full DB hydration)
   const inspectSession = async (sess) => {
     try {
       setCurrentSessionId(sess.id);
-      setCustomerName(sess.customer);
+      currentSessionIdRef.current = sess.id;
+      setCustomerName(sess.customer === 'Pending Identification' ? '' : sess.customer);
       setCustomerId(sess.customerId);
       setAppNo(sess.appNo);
       setActiveTab('live');
 
       const details = await fetchSessionDetails(sess.id);
-      if (details && details.session && details.session.entities && details.session.entities.length > 0) {
-        const mappedEntities = details.session.entities.map(e => ({
-          id: e.entity_type,
-          label: e.label,
-          value: e.value,
-          type: e.entity_type,
-          confidence: Math.round(e.confidence),
-          status: e.status,
-          history: e.history || [e.value],
-          phoneticSummary: e.phonetic_summary || '',
-          icon: ENTITY_ICONS[e.entity_type] || User,
-          verifiedAt: e.verified_at
-        }));
-        setEntities(mappedEntities);
+      if (details) {
+        hydrateSessionFromBackend(details);
       }
     } catch (err) {
-      console.warn('Could not load session details from API:', err);
+      setErrorBanner(`Could not load session details: ${err.message}`);
       setActiveTab('live');
     }
   };
@@ -446,14 +504,43 @@ function EchoTrustDashboard({ user, onLogout, onGoHome }) {
     }));
   };
 
-  const ensureSessionActive = () => {
-    if (currentSessionId) return currentSessionId;
-    const randomNum = Math.floor(10000 + Math.random() * 90000);
-    const newSessId = `SES-${randomNum}`;
-    setCurrentSessionId(newSessId);
-    setCustomerId(`CUST-${Math.floor(1000 + Math.random() * 9000)}`);
-    setAppNo(`LOAN-${new Date().getFullYear()}-${Math.floor(100 + Math.random() * 900)}`);
-    return newSessId;
+  const ensureSessionActive = async (forceNew = false) => {
+    if (!forceNew && currentSessionIdRef.current) return currentSessionIdRef.current;
+    if (!forceNew && creatingSessionPromiseRef.current) {
+      return creatingSessionPromiseRef.current;
+    }
+
+    const createTask = (async () => {
+      try {
+        const created = await createSession({
+          customer_name: 'Pending Identification',
+          channel: 'Automated Voice Agent',
+          status: 'In Progress',
+          entity_count: 8,
+        });
+        const sid = created.id;
+        setCurrentSessionId(sid);
+        currentSessionIdRef.current = sid;
+        setCustomerId(created.customer_code || created.customer_id || '');
+        setAppNo(created.app_no || '');
+        setVerificationSummary(created.verification_summary || '');
+        try { sessionStorage.setItem('echotrust_active_session_id', sid); } catch (e) {}
+        return sid;
+      } catch (err) {
+        setErrorBanner(`Database session error: ${err.message}. Falling back to local session ID.`);
+        const fallbackId = `SES-${Math.floor(10000 + Math.random() * 90000)}`;
+        setCurrentSessionId(fallbackId);
+        currentSessionIdRef.current = fallbackId;
+        setCustomerId(`CUST-${Math.floor(1000 + Math.random() * 9000)}`);
+        setAppNo(`LOAN-${new Date().getFullYear()}-${Math.floor(100 + Math.random() * 900)}`);
+        return fallbackId;
+      } finally {
+        creatingSessionPromiseRef.current = null;
+      }
+    })();
+
+    creatingSessionPromiseRef.current = createTask;
+    return createTask;
   };
 
   // Live session timer ticker (counts only once a session has started or while recording)
@@ -473,9 +560,76 @@ function EchoTrustDashboard({ user, onLogout, onGoHome }) {
     return `${mins.toString().padStart(2, '0')}:${remSecs.toString().padStart(2, '0')}`;
   };
 
+  const stopBargeInMonitor = () => {
+    if (bargeInRafRef.current) {
+      cancelAnimationFrame(bargeInRafRef.current);
+      bargeInRafRef.current = null;
+    }
+    if (bargeInStreamRef.current) {
+      bargeInStreamRef.current.getTracks().forEach(t => t.stop());
+      bargeInStreamRef.current = null;
+    }
+    if (bargeInCtxRef.current) {
+      bargeInCtxRef.current.close().catch(() => {});
+      bargeInCtxRef.current = null;
+    }
+  };
+
+  const startBargeInMonitor = async () => {
+    if (!isAutonomousModeRef.current || isRecordingRef.current) return;
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return;
+    stopBargeInMonitor();
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
+      });
+      bargeInStreamRef.current = stream;
+      const AudioCtx = window.AudioContext || window.webkitAudioContext;
+      const ctx = new AudioCtx();
+      bargeInCtxRef.current = ctx;
+      const src = ctx.createMediaStreamSource(stream);
+      const analyser = ctx.createAnalyser();
+      analyser.fftSize = 64;
+      src.connect(analyser);
+
+      const data = new Uint8Array(analyser.frequencyBinCount);
+      const startedAt = Date.now();
+      let hotFrames = 0;
+
+      const checkSpeech = () => {
+        if (!activeAudioRef.current || isRecordingRef.current || !isAutonomousModeRef.current) {
+          stopBargeInMonitor();
+          return;
+        }
+        analyser.getByteFrequencyData(data);
+        let sum = 0;
+        for (let i = 0; i < data.length; i++) sum += data[i];
+        const avg = sum / data.length;
+
+        // 450ms echo guard + sustained voice > threshold triggers automatic barge-in
+        if (Date.now() - startedAt > 450 && avg > 34) {
+          hotFrames += 1;
+          if (hotFrames >= 5) {
+            stopBargeInMonitor();
+            interruptAudioPlayback();
+            setAudioFeedbackNotice('Voice interruption detected — listening to you now...');
+            startMicrophoneCapture();
+            return;
+          }
+        } else {
+          hotFrames = Math.max(0, hotFrames - 1);
+        }
+        bargeInRafRef.current = requestAnimationFrame(checkSpeech);
+      };
+      bargeInRafRef.current = requestAnimationFrame(checkSpeech);
+    } catch {
+      // Permission not yet granted or denied cleanly; manual interrupt button remains available
+    }
+  };
+
   const interruptAudioPlayback = () => {
-    // Invalidate any in-flight or ongoing TTS playback requests immediately
     currentPlaybackIdRef.current += 1;
+    stopBargeInMonitor();
     if (activeAudioRef.current) {
       try {
         activeAudioRef.current.pause();
@@ -499,29 +653,26 @@ function EchoTrustDashboard({ user, onLogout, onGoHome }) {
     setAudioWaveformHeights([35, 60, 20, 85, 95, 45, 100, 70, 40, 90, 65, 30, 80, 50, 25, 90, 40, 75, 30, 60, 85, 20]);
   };
 
-  // Text-to-Speech Readback implementation using Official Gnani Timbre v3.0 (Shivani female voice matching reference audio)
-  const speakReadBack = async (text, customSpelling = null) => {
+  // Text-to-Speech Readback using Official Gnani Timbre v3.0 (Default: Devansh Male Conversational Voice)
+  const speakReadBack = async (text, customSpelling = null, forceAutoListen = null) => {
     let speechContent = customSpelling || text;
     if (!speechContent || !speechContent.trim()) return;
 
-    // Interrupt any ongoing audio and capture unique sequence token for this request
     interruptAudioPlayback();
     const myPlaybackId = currentPlaybackIdRef.current;
 
     setIsPlayingAudio(true);
-    setAudioFeedbackNotice(`Gnani Timbre v3.0 (${selectedTtsVoice}): Synthesizing...`);
+    setAudioFeedbackNotice(`Gnani Timbre v3.0 (${selectedTtsVoice}): Synthesizing Hinglish voice...`);
 
-    // Helper to animate visualizer bars during audio playback
     const startWaveformAnimation = () => {
       if (audioAnimationIntervalRef.current) clearInterval(audioAnimationIntervalRef.current);
       audioAnimationIntervalRef.current = setInterval(() => {
-        setAudioWaveformHeights(prev =>
-          prev.map(() => Math.floor(Math.random() * 75) + 25)
-        );
+        setAudioWaveformHeights(prev => prev.map(() => Math.floor(Math.random() * 75) + 25));
       }, 90);
     };
 
     const stopWaveformAnimation = () => {
+      stopBargeInMonitor();
       if (audioAnimationIntervalRef.current) {
         clearInterval(audioAnimationIntervalRef.current);
         audioAnimationIntervalRef.current = null;
@@ -532,14 +683,12 @@ function EchoTrustDashboard({ user, onLogout, onGoHome }) {
     };
 
     try {
-      // Synthesize using official Gnani Timbre v3.0 API with selected Indian voice (default Shivani female tone)
       const audioUrl = await synthesizeSpeechAPI(speechContent, {
-        voice: selectedTtsVoice,
+        voice: selectedTtsVoice || 'Devansh',
         model: selectedTtsModel || 'timbre-v3.0',
         speed: 1.0
       });
 
-      // Strict single-audio check: if interrupted or superseded during network fetch, discard immediately
       if (myPlaybackId !== currentPlaybackIdRef.current) {
         if (audioUrl) {
           try { URL.revokeObjectURL(audioUrl); } catch (e) {}
@@ -547,7 +696,6 @@ function EchoTrustDashboard({ user, onLogout, onGoHome }) {
         return;
       }
 
-      // Ensure any previously active audio element is paused
       if (activeAudioRef.current) {
         try {
           activeAudioRef.current.pause();
@@ -561,29 +709,27 @@ function EchoTrustDashboard({ user, onLogout, onGoHome }) {
 
       audio.onplay = () => {
         if (myPlaybackId !== currentPlaybackIdRef.current) {
-          try {
-            audio.pause();
-            audio.src = "";
-          } catch (e) {}
+          try { audio.pause(); audio.src = ""; } catch (e) {}
           return;
         }
         setIsPlayingAudio(true);
         startWaveformAnimation();
-        setAudioFeedbackNotice(`Gnani Timbre v3.0 (${selectedTtsVoice} - Indian Female Tone): "${speechContent.slice(0, 50)}..."`);
+        setAudioFeedbackNotice(`EchoTrust AI (${selectedTtsVoice} • Timbre v3.0): "${speechContent.slice(0, 58)}..."`);
+        startBargeInMonitor();
       };
 
       audio.onended = () => {
         if (myPlaybackId === currentPlaybackIdRef.current) {
           stopWaveformAnimation();
           activeAudioRef.current = null;
-          // Full Automation: Hands-free listening for customer's response
-          if (isAutonomousModeRef.current) {
-            setAudioFeedbackNotice('EchoTrust AI is listening... Speak into microphone.');
+          const shouldListen = forceAutoListen !== null ? forceAutoListen : isAutonomousModeRef.current;
+          if (shouldListen && isAutonomousModeRef.current) {
+            setAudioFeedbackNotice('EchoTrust AI is listening... Speak naturally into your microphone.');
             setTimeout(() => {
               if (isAutonomousModeRef.current && !isRecordingRef.current && !isProcessingAudioRef.current && !activeAudioRef.current) {
                 startMicrophoneCapture();
               }
-            }, 500);
+            }, 350);
           }
         }
         try { URL.revokeObjectURL(audioUrl); } catch (e) {}
@@ -594,6 +740,7 @@ function EchoTrustDashboard({ user, onLogout, onGoHome }) {
         if (myPlaybackId === currentPlaybackIdRef.current) {
           stopWaveformAnimation();
           activeAudioRef.current = null;
+          setErrorBanner('Audio playback blocked or failed. Allow browser audio/autoplay permissions or click Play on any message.');
         }
         try { URL.revokeObjectURL(audioUrl); } catch (err) {}
       };
@@ -601,29 +748,42 @@ function EchoTrustDashboard({ user, onLogout, onGoHome }) {
       await audio.play();
     } catch (apiErr) {
       if (apiErr && (apiErr.name === 'AbortError' || apiErr.message?.includes('interrupted') || apiErr.message?.includes('abort'))) {
-        return; // Normal interruption, ignore cleanly
+        return;
       }
-      console.warn('Gnani TTS API call error:', apiErr);
       if (myPlaybackId === currentPlaybackIdRef.current) {
         stopWaveformAnimation();
-        setAudioFeedbackNotice('Gnani TTS audio synthesis unavailable.');
+        setErrorBanner(`Gnani TTS error (${selectedTtsVoice}): ${apiErr.message || 'Audio synthesis failed'}`);
+        setAudioFeedbackNotice('TTS unavailable — read the AI response above or respond via mic/text.');
+        if (isAutonomousModeRef.current) {
+          setTimeout(() => {
+            if (isAutonomousModeRef.current && !isRecordingRef.current && !isProcessingAudioRef.current) {
+              startMicrophoneCapture();
+            }
+          }, 500);
+        }
       }
     }
   };
 
-  // Full Automation: Start KYC call with opening reference audio (Shivani tone) and auto-listen loop
+  // Full Automation: Create DB session, greet via Gnani Timbre v3.0 (Devansh), and start hands-free voice loop
   const handleStartAutomatedSession = async () => {
-    const activeSess = ensureSessionActive();
-    setIsAutonomousMode(true);
-    isAutonomousModeRef.current = true;
+    setErrorBanner('');
+    interruptAudioPlayback();
+    setEntities(INITIAL_ENTITIES.map(e => ({ ...e })));
+    setCustomerName('');
+    setCallDuration(0);
+    setActiveEntityIndex(0);
+    activeTargetIdRef.current = 'name';
     hasSpokenInTurnRef.current = false;
     lastSpokenTimeRef.current = null;
 
-    // Interrupt any ongoing audio
-    interruptAudioPlayback();
-    const myPlaybackId = currentPlaybackIdRef.current;
+    setIsAutonomousMode(true);
+    isAutonomousModeRef.current = true;
 
-    const openingGreeting = "नमस्ते, कैसे हैं आप? मैं EchoTrust AI assistant हूँ, मैं आपकी details verify करने में help करूँगी। सबसे पहले, क्या मैं आपका नाम confirm कर सकती हूँ?";
+    const sid = await ensureSessionActive(true);
+    if (!sid) return;
+
+    const openingGreeting = "Namaste! Main EchoTrust AI Verification Officer hoon. Aaj hum aapki KYC details verify karenge. Shuru karne ke liye kripya apna poora naam batayein?";
 
     const timeNow = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
     setDialogue([
@@ -636,152 +796,104 @@ function EchoTrustDashboard({ user, onLogout, onGoHome }) {
       }
     ]);
 
-    setIsPlayingAudio(true);
-    setAudioFeedbackNotice('EchoTrust AI (Shivani): Initiating verification call...');
-
-    // Animate visualizer bars
-    if (audioAnimationIntervalRef.current) clearInterval(audioAnimationIntervalRef.current);
-    audioAnimationIntervalRef.current = setInterval(() => {
-      setAudioWaveformHeights(prev =>
-        prev.map(() => Math.floor(Math.random() * 75) + 25)
-      );
-    }, 90);
-
-    try {
-      const audio = new Audio('/generated-audio.wav');
-      activeAudioRef.current = audio;
-
-      audio.onplay = () => {
-        if (myPlaybackId !== currentPlaybackIdRef.current) {
-          try { audio.pause(); audio.src = ""; } catch (e) {}
-          return;
-        }
-        setIsPlayingAudio(true);
-      };
-
-      audio.onended = () => {
-        if (myPlaybackId === currentPlaybackIdRef.current) {
-          if (audioAnimationIntervalRef.current) {
-            clearInterval(audioAnimationIntervalRef.current);
-            audioAnimationIntervalRef.current = null;
-          }
-          setIsPlayingAudio(false);
-          activeAudioRef.current = null;
-          setAudioFeedbackNotice('EchoTrust AI is listening... Speak your full name.');
-
-          // Full Automation: Automatically start microphone to capture customer's answer!
-          if (isAutonomousModeRef.current) {
-            setTimeout(() => {
-              if (isAutonomousModeRef.current && !isRecordingRef.current && !isProcessingAudioRef.current && !activeAudioRef.current) {
-                startMicrophoneCapture();
-              }
-            }, 400);
-          }
-        }
-      };
-
-      audio.onerror = () => {
-        if (myPlaybackId === currentPlaybackIdRef.current) {
-          if (audioAnimationIntervalRef.current) {
-            clearInterval(audioAnimationIntervalRef.current);
-            audioAnimationIntervalRef.current = null;
-          }
-          setIsPlayingAudio(false);
-          activeAudioRef.current = null;
-          if (isAutonomousModeRef.current) {
-            setTimeout(() => {
-              startMicrophoneCapture();
-            }, 400);
-          }
-        }
-      };
-
-      await audio.play();
-    } catch (e) {
-      console.warn('Autoplay notice:', e);
-      setIsPlayingAudio(false);
-      setAudioFeedbackNotice('EchoTrust AI ready. Click "Start Voice Capture" or speak into microphone.');
-    }
+    loadDashboardData();
+    await speakReadBack(openingGreeting, null, true);
   };
 
-  // Play and Transcribe generated-audio.wav with Gnani STT
+  // Unified Backend State Synchronizer (Single Source of Truth from FastAPI + SQLite/Supabase)
+  const syncBackendTurnState = (res, fallbackTranscript = null) => {
+    if (!res) return;
+
+    if (res.session_id) {
+      setCurrentSessionId(res.session_id);
+      currentSessionIdRef.current = res.session_id;
+      try { sessionStorage.setItem('echotrust_active_session_id', res.session_id); } catch (e) {}
+    }
+    if (res.customer_id) setCustomerId(res.customer_id);
+    if (res.app_no) setAppNo(res.app_no);
+    if (res.verification_summary) setVerificationSummary(res.verification_summary);
+
+    if (res.entities && typeof res.entities === 'object' && !Array.isArray(res.entities)) {
+      setEntities(INITIAL_ENTITIES.map(base => {
+        const be = res.entities[base.id];
+        if (!be) return { ...base };
+        return {
+          ...base,
+          value: be.value || '',
+          confidence: Math.round(be.confidence || 0),
+          status: be.status || 'waiting',
+          history: be.history || (be.value ? [be.value] : []),
+          phoneticSummary: be.phoneticSummary || be.phonetic_summary || 'Waiting for vocal input...',
+          verifiedAt: be.verifiedAt || be.verified_at || null,
+        };
+      }));
+
+      if (res.entities.name && res.entities.name.value) {
+        setCustomerName(res.entities.name.value);
+      }
+    } else if (res.extracted_entities && res.extracted_entities.length > 0) {
+      applyExtractedEntities(res.extracted_entities, fallbackTranscript || '', res.confidence || 92, false);
+    }
+
+    if (Array.isArray(res.dialogue_log) && res.dialogue_log.length > 0) {
+      setDialogue(res.dialogue_log.map((m, idx) => ({
+        id: m.id || `turn-${idx}-${m.sender}`,
+        sender: m.sender === 'customer' ? 'user' : m.sender,
+        text: m.text || '',
+        phonetic: m.action === 'confirm_entity',
+        time: m.timestamp
+          ? new Date(m.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+          : new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+      })));
+    }
+
+    if (res.active_target_id) {
+      activeTargetIdRef.current = res.active_target_id;
+      const targetIdx = INITIAL_ENTITIES.findIndex(e => e.id === res.active_target_id);
+      if (targetIdx !== -1) setActiveEntityIndex(targetIdx);
+    } else if (res.action === 'all_confirmed') {
+      activeTargetIdRef.current = null;
+      setActiveEntityIndex(null);
+      try { sessionStorage.removeItem('echotrust_active_session_id'); } catch (e) {}
+    }
+
+    // Auto-refresh Dashboard, Analytics & Health status from DB
+    loadDashboardData();
+    loadAnalyticsData();
+    loadHealthStatus();
+  };
+
+  // Play and Transcribe reference audio with Official Gnani STT
   const handleProcessSampleAudio = async () => {
     if (isProcessingAudio) {
       setAudioFeedbackNotice('Please wait for current speech processing to complete...');
       return;
     }
-    const activeSess = ensureSessionActive();
+    setErrorBanner('');
+    const activeSess = await ensureSessionActive();
     setIsProcessingAudio(true);
-    setAudioFeedbackNotice(`Transcribing generated-audio.wav with Official Gnani STT (${selectedSttLanguage})...`);
+    isProcessingAudioRef.current = true;
+    setAudioFeedbackNotice(`Transcribing reference sample with Official Gnani STT (${selectedSttLanguage})...`);
 
-    // Interrupt any previous playback and get token for sample audio
     interruptAudioPlayback();
-    const myPlaybackId = currentPlaybackIdRef.current;
 
     try {
-      const audio = new Audio('/generated-audio.wav');
-      activeAudioRef.current = audio;
-      audio.onplay = () => {
-        if (myPlaybackId !== currentPlaybackIdRef.current) {
-          try { audio.pause(); audio.src = ""; } catch (e) {}
-          return;
-        }
-        setIsPlayingAudio(true);
-      };
-      audio.onended = () => {
-        if (myPlaybackId === currentPlaybackIdRef.current) {
-          setIsPlayingAudio(false);
-          activeAudioRef.current = null;
-        }
-      };
-      audio.onerror = () => {
-        if (myPlaybackId === currentPlaybackIdRef.current) {
-          setIsPlayingAudio(false);
-          activeAudioRef.current = null;
-        }
-      };
-      audio.play().catch(e => {
-        if (e.name !== 'AbortError') console.warn('Audio play notice:', e);
-      });
-    } catch (e) {
-      console.warn('Audio play notice:', e);
-    }
+      const targetId = isCorrecting && correctionTarget ? correctionTarget.id : activeTargetIdRef.current;
+      const res = await transcribeSampleAudioAPI(activeSess, targetId, selectedSttLanguage);
 
-    try {
-      const targetId = isCorrecting && correctionTarget ? correctionTarget.id : null;
-      const res = await transcribeSampleAudioAPI(activeSess, targetId);
-
+      syncBackendTurnState(res, res?.transcript);
       if (res && res.transcript) {
-        const transcript = res.transcript;
-        const conf = res.confidence || 94.5;
-        setSttEngineStatus(res.stt_engine || 'Gnani Prisma-v3.0 (indic-auto)');
-
-        const timeNow = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-        setDialogue(prev => [
-          ...prev,
-          {
-            id: Date.now(),
-            sender: 'user',
-            text: `[Reference Audio: generated-audio.wav] ${transcript}`,
-            time: timeNow
-          },
-          {
-            id: Date.now() + 1,
-            sender: 'ai',
-            text: res.ai_response_text || `Acoustic stream successfully verified via Official Gnani STT (${res.stt_engine || 'prisma-v3.0'} - ${conf}% confidence). Active voice calibrated to Shivani (Timbre v3.0 Female Tone).`,
-            time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
-          }
-        ]);
-
-        if (res.extracted_entities && res.extracted_entities.length > 0) {
-          applyExtractedEntities(res.extracted_entities, transcript, conf, false);
+        const conf = res.confidence || 94.0;
+        setSttEngineStatus(`Gnani ${res.model || 'prisma-v3.0'} (${res.language_code || selectedSttLanguage})`);
+        const aiReply = res.reply || res.ai_response_text;
+        if (aiReply) {
+          await speakReadBack(aiReply, null, false);
         }
-
         setAudioFeedbackNotice(`Transcribed successfully via Official Gnani STT (${conf}% confidence)`);
       }
     } catch (err) {
-      console.error('Sample audio processing error:', err);
-      setAudioFeedbackNotice('Failed to process generated-audio.wav with Gnani STT API.');
+      setErrorBanner(`Sample audio STT failed: ${err.message}`);
+      setAudioFeedbackNotice('Failed to process sample audio with Gnani STT API.');
     } finally {
       setIsProcessingAudio(false);
       isProcessingAudioRef.current = false;
@@ -854,16 +966,17 @@ function EchoTrustDashboard({ user, onLogout, onGoHome }) {
     }
   };
 
-  // Real-time microphone audio capture with Web Audio API & Analyser
+  // Real-time microphone audio capture with Web Audio API & VAD auto start/stop
   const startMicrophoneCapture = async () => {
     try {
-      ensureSessionActive();
+      stopBargeInMonitor();
+      await ensureSessionActive();
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-        setAudioFeedbackNotice('Microphone access is not supported by your browser.');
+        setErrorBanner('Microphone access is not supported by your browser. Use Chrome/Edge HTTPS or type responses below.');
         return;
       }
 
-      setAudioFeedbackNotice('Requesting high-fidelity microphone with active noise suppression...');
+      setAudioFeedbackNotice('Activating noise-suppressed microphone for Hindi/English/Hinglish speech...');
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
           echoCancellation: true,
@@ -901,7 +1014,6 @@ function EchoTrustDashboard({ user, onLogout, onGoHome }) {
           }
           setAudioWaveformHeights(newHeights);
 
-          // Full Automation VAD: Compute average volume level
           const avgVolume = sum / 22;
           const now = Date.now();
           if (avgVolume > 20) {
@@ -943,12 +1055,13 @@ function EchoTrustDashboard({ user, onLogout, onGoHome }) {
       isRecordingRef.current = true;
       hasSpokenInTurnRef.current = false;
       lastSpokenTimeRef.current = null;
-      setAudioFeedbackNotice('Listening in real time... Speak into your microphone (e.g. name, phone, PAN, address)');
+      setAudioFeedbackNotice('Listening in real time... Speak clearly in Hindi, English, or Hinglish.');
     } catch (err) {
-      console.error('Microphone access denied:', err);
       setIsRecording(false);
       isRecordingRef.current = false;
-      setAudioFeedbackNotice(`Microphone access error: ${err.message || 'Permission denied'}. You can also type speech input below.`);
+      const deniedMsg = `Microphone permission denied or unavailable (${err.message || 'Permission denied'}). Grant mic access or type below to continue.`;
+      setErrorBanner(deniedMsg);
+      setAudioFeedbackNotice(deniedMsg);
     }
   };
 
@@ -986,7 +1099,7 @@ function EchoTrustDashboard({ user, onLogout, onGoHome }) {
   };
 
   const handleAudioCaptured = async (audioBlob) => {
-    if (!audioBlob || audioBlob.size < 200) {
+    if (!audioBlob || audioBlob.size < 250) {
       setAudioFeedbackNotice('Vocal audio was too brief. Please speak clearly into your microphone.');
       setIsProcessingAudio(false);
       isProcessingAudioRef.current = false;
@@ -1000,61 +1113,49 @@ function EchoTrustDashboard({ user, onLogout, onGoHome }) {
       return;
     }
 
-    const activeSess = ensureSessionActive();
+    const activeSess = await ensureSessionActive();
+    setErrorBanner('');
     setIsProcessingAudio(true);
     isProcessingAudioRef.current = true;
     setAudioFeedbackNotice(`Transcribing with Official Gnani STT (Prisma-v3.0 ${selectedSttLanguage})...`);
 
     try {
-      const targetId = isCorrecting && correctionTarget ? correctionTarget.id : null;
-      const res = await transcribeAudioBlob(audioBlob, activeSess, targetId, selectedSttLanguage);
-      
+      const targetId = isCorrecting && correctionTarget ? correctionTarget.id : activeTargetIdRef.current;
+      const lastTranscripts = dialogue.filter(m => m.sender === 'user').map(m => m.text).slice(-2).join(' ');
+      const res = await transcribeAudioBlob(audioBlob, activeSess, targetId, selectedSttLanguage, lastTranscripts);
+
       if (res && res.status === 'error') {
-        setAudioFeedbackNotice(res.error || 'Gnani STT busy. Please wait a moment and try speaking again.');
+        const errMsg = res.error || 'Gnani STT error. Please speak again.';
+        setErrorBanner(errMsg);
+        setAudioFeedbackNotice(errMsg);
         return;
       }
 
       if (res && res.transcript) {
-        const transcript = res.transcript;
-        const conf = res.confidence || 94.5;
-        setSttEngineStatus(res.stt_engine || `Gnani Prisma-v3.0 (${selectedSttLanguage})`);
+        const conf = res.confidence || 94.0;
+        setSttEngineStatus(`Gnani ${res.model || 'prisma-v3.0'} (${res.language_code || selectedSttLanguage})`);
+        syncBackendTurnState(res, res.transcript);
 
-        const timeNow = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-        setDialogue(prev => [
-          ...prev,
-          {
-            id: Date.now(),
-            sender: 'user',
-            text: transcript,
-            time: timeNow
-          }
-        ]);
-
-        if (res.extracted_entities && res.extracted_entities.length > 0) {
-          applyExtractedEntities(res.extracted_entities, transcript, conf, false);
+        const aiReply = res.reply || res.ai_response_text;
+        if (aiReply) {
+          const keepLooping = res.action !== 'all_confirmed';
+          await speakReadBack(aiReply, null, keepLooping);
         }
-
-        if (res.ai_response_text) {
-          setDialogue(prev => [
-            ...prev,
-            {
-              id: Date.now() + 1,
-              sender: 'ai',
-              text: res.ai_response_text,
-              phonetic: res.action === 'entity_captured',
-              time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
-            }
-          ]);
-          speakReadBack(res.ai_response_text);
-        }
-
         setAudioFeedbackNotice(`Transcribed via Gnani STT (${conf}% confidence)`);
-      } else if (res && res.error) {
-        setAudioFeedbackNotice(`Gnani STT error: ${res.error}`);
+      } else {
+        setAudioFeedbackNotice('Speech was empty or unclear. Please repeat.');
       }
     } catch (err) {
-      console.error('Audio processing error:', err);
-      setAudioFeedbackNotice(`Audio processing error: ${err.message || 'Check microphone or API'}`);
+      const msg = err.message || 'Check microphone, network connection, or Gnani API credentials';
+      setErrorBanner(`Audio processing error: ${msg}`);
+      setAudioFeedbackNotice(`Audio processing error: ${msg}`);
+      if (isAutonomousModeRef.current) {
+        setTimeout(() => {
+          if (isAutonomousModeRef.current && !isRecordingRef.current && !activeAudioRef.current) {
+            startMicrophoneCapture();
+          }
+        }, 1800);
+      }
     } finally {
       setIsProcessingAudio(false);
       isProcessingAudioRef.current = false;
@@ -1112,48 +1213,27 @@ function EchoTrustDashboard({ user, onLogout, onGoHome }) {
   const handleSimulatedSpeechInput = async (inputText) => {
     if (!inputText || !inputText.trim()) return;
 
-    // Interrupt any playing audio before submitting
     interruptAudioPlayback();
-    const activeSess = ensureSessionActive();
-
-    const timeNow = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-    setDialogue(prev => [
-      ...prev,
-      {
-        id: Date.now(),
-        sender: 'user',
-        text: inputText,
-        time: timeNow
-      }
-    ]);
+    setErrorBanner('');
+    const activeSess = await ensureSessionActive();
 
     setIsProcessingAudio(true);
-    setAudioFeedbackNotice('Processing speech with Gnani AI Conversational Engine...');
+    isProcessingAudioRef.current = true;
+    setAudioFeedbackNotice('Processing customer input with EchoTrust AI Engine...');
 
     try {
-      const targetId = isCorrecting && correctionTarget ? correctionTarget.id : null;
-      const res = await processDialogueAPI(inputText, activeSess, targetId);
+      const targetId = isCorrecting && correctionTarget ? correctionTarget.id : activeTargetIdRef.current;
+      const res = await processDialogueAPI(inputText, activeSess, targetId, null, 95.0);
+      syncBackendTurnState(res, inputText);
 
-      if (res && res.extracted_entities && res.extracted_entities.length > 0) {
-        applyExtractedEntities(res.extracted_entities, inputText, 95.0, false);
-      }
-
-      if (res && res.ai_response_text) {
-        setDialogue(prev => [
-          ...prev,
-          {
-            id: Date.now() + 1,
-            sender: 'ai',
-            text: res.ai_response_text,
-            phonetic: res.action === 'entity_captured',
-            time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
-          }
-        ]);
-        speakReadBack(res.ai_response_text);
+      const aiReply = res?.reply || res?.ai_response_text;
+      if (aiReply) {
+        const keepLooping = isAutonomousModeRef.current && res.action !== 'all_confirmed';
+        await speakReadBack(aiReply, null, keepLooping);
       }
     } catch (err) {
-      console.error('Dialogue processing error:', err);
-      setAudioFeedbackNotice('Dialogue processing notice: Check backend connection.');
+      setErrorBanner(`Dialogue processing failed: ${err.message || 'Check backend server connection.'}`);
+      setAudioFeedbackNotice('Dialogue processing error: Check backend connection.');
     } finally {
       setIsProcessingAudio(false);
       isProcessingAudioRef.current = false;
@@ -1162,60 +1242,55 @@ function EchoTrustDashboard({ user, onLogout, onGoHome }) {
 
   const handleConfirmEntity = async (entityId) => {
     const ent = entities.find(e => e.id === entityId);
-    if (!ent) return;
+    if (!ent || !ent.value) return;
 
+    const activeSess = await ensureSessionActive();
     try {
       await confirmEntityAPI(
-        currentSessionId,
+        activeSess,
         entityId,
         ent.type,
         ent.value,
-        Math.max(ent.confidence, 96)
+        Math.max(ent.confidence, 95)
       );
 
       const timeStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-      setEntities(prev => prev.map(item => {
-        if (item.id === entityId) {
-          return {
-            ...item,
-            status: 'verified',
-            confidence: Math.max(item.confidence, 96),
-            verifiedAt: timeStr
-          };
-        }
-        return item;
-      }));
+      const nextEntities = entities.map(item =>
+        item.id === entityId
+          ? { ...item, status: 'verified', confidence: Math.max(item.confidence, 95), verifiedAt: timeStr }
+          : item
+      );
+      setEntities(nextEntities);
 
       const timeSecs = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
       setDialogue(prev => [
         ...prev,
-        {
-          id: Date.now(),
-          sender: 'user',
-          text: `Yes, ${ent.label} is correct.`,
-          time: timeSecs
-        },
-        {
-          id: Date.now() + 1,
-          sender: 'ai',
-          text: `Acknowledged. ${ent.label} (${ent.value}) has been marked verified with high confidence.`,
-          time: timeSecs
-        }
+        { id: Date.now(), sender: 'user', text: `Yes, ${ent.label} is correct.`, time: timeSecs },
+        { id: Date.now() + 1, sender: 'ai', text: `${ent.label} (${ent.value}) verified aur save ho gaya hai.`, time: timeSecs }
       ]);
 
-      const nextPendingIndex = entities.findIndex((e, i) => i !== activeEntityIndex && e.status !== 'verified');
-      if (nextPendingIndex !== -1) {
-        setActiveEntityIndex(nextPendingIndex);
-        const nextEnt = entities[nextPendingIndex];
-        const nextPhonetics = getPhoneticSpelling(nextEnt.value).map(p => `${p.char} as in ${p.code}`).join(', ');
-        speakReadBack(`Now proceeding to ${nextEnt.label}: ${nextEnt.value}. Phonetic confirmation: ${nextPhonetics}. Is this correct?`);
+      const nextPendingIndex = nextEntities.findIndex(e => e.id !== entityId && e.status !== 'verified' && e.value);
+      const nextMissingIndex = nextPendingIndex !== -1 ? nextPendingIndex : nextEntities.findIndex(e => e.id !== entityId && e.status !== 'verified');
+      if (nextMissingIndex !== -1) {
+        setActiveEntityIndex(nextMissingIndex);
+        const nextEnt = nextEntities[nextMissingIndex];
+        activeTargetIdRef.current = nextEnt.id;
+        if (nextEnt.value) {
+          const nextPhonetics = getPhoneticSpelling(nextEnt.value).map(p => `${p.char} as in ${p.code}`).join(', ');
+          speakReadBack(`Agla detail ${nextEnt.label}: ${nextEnt.value} (${nextPhonetics}). Kya ye sahi hai?`);
+        } else {
+          speakReadBack(`Bahut badhiya, ${ent.label} confirm ho gaya! Ab kripya apna ${nextEnt.label} batayein.`);
+        }
       } else {
-        speakReadBack(`All 6 customer identity entities successfully confirmed and verified for ${customerName}. Session ready for final approval.`);
+        activeTargetIdRef.current = null;
+        setActiveEntityIndex(null);
+        speakReadBack(`Dhanyawad! Aapke saare ${nextEntities.length} KYC details verify ho gaye hain.`);
       }
 
       loadDashboardData();
+      loadAnalyticsData();
     } catch (err) {
-      console.error('Confirmation error:', err);
+      setErrorBanner(`Entity confirmation error: ${err.message}`);
     }
   };
 
@@ -1227,19 +1302,22 @@ function EchoTrustDashboard({ user, onLogout, onGoHome }) {
 
   const submitCorrection = async () => {
     if (!correctionTarget || !correctionInput.trim()) return;
+    const activeSess = await ensureSessionActive();
 
     try {
       const res = await correctEntityAPI(
-        currentSessionId,
+        activeSess,
         correctionTarget.id,
         correctionTarget.type,
         correctionTarget.value,
         correctionInput,
-        correctionTarget.confidence
+        correctionTarget.confidence,
+        95
       );
 
-      const correctedData = res?.corrected_entity;
-      const updatedPhonetics = getPhoneticSpelling(correctionInput)
+      const newVal = res?.corrected_value || correctionInput;
+      const newConf = Math.round(res?.confidence || 94);
+      const updatedPhonetics = getPhoneticSpelling(newVal)
         .map(p => `${p.char} as in ${p.code}`)
         .join(', ');
 
@@ -1247,40 +1325,41 @@ function EchoTrustDashboard({ user, onLogout, onGoHome }) {
         if (ent.id === correctionTarget.id) {
           return {
             ...ent,
-            value: correctedData?.value || correctionInput,
-            confidence: correctedData?.confidence || 94,
-            status: 'corrected',
-            history: [...ent.history, correctionInput],
+            value: newVal,
+            confidence: newConf,
+            status: 'pending', // Corrected values still require confirmation!
+            history: [...ent.history, newVal],
             phoneticSummary: updatedPhonetics.slice(0, 48) + '...'
           };
         }
         return ent;
       }));
 
+      const readbackMsg = res?.readback_prompt || `Updating ${correctionTarget.label} to "${newVal}". Phonetic check: ${updatedPhonetics.slice(0, 80)}. Kya ab ye sahi hai?`;
       const timeNow = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-      const newDialogue = [
-        ...dialogue,
+      setDialogue(prev => [
+        ...prev,
         {
           id: Date.now(),
           sender: 'user',
-          text: `No, that was incorrect. The correct ${correctionTarget.label} is: ${correctionInput}.`,
+          text: `No, correct ${correctionTarget.label} to: ${newVal}.`,
           time: timeNow
         },
         {
           id: Date.now() + 1,
           sender: 'ai',
-          text: `Updating ${correctionTarget.label} to "${correctionInput}". Re-verifying phonetically: ${updatedPhonetics.slice(0, 80)}. Is this accurate?`,
+          text: readbackMsg,
           phonetic: true,
           time: timeNow
         }
-      ];
-      setDialogue(newDialogue);
+      ]);
       setIsCorrecting(false);
-      
-      speakReadBack(`Captured update: ${correctionInput}. Phonetic breakdown: ${updatedPhonetics}. Is this correct?`);
+
+      speakReadBack(readbackMsg);
       loadDashboardData();
+      loadAnalyticsData();
     } catch (err) {
-      console.error('Correction submission error:', err);
+      setErrorBanner(`Correction error: ${err.message}`);
       setIsCorrecting(false);
     }
   };
@@ -1537,6 +1616,22 @@ function EchoTrustDashboard({ user, onLogout, onGoHome }) {
             MAIN CONTENT CONTAINER
            ========================================================= */}
         <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6">
+          {/* Explicit Error / Permission Alert Banner (never fails silently) */}
+          {errorBanner && (
+            <div className="bg-rose-50 border border-rose-200 px-4 py-2.5 rounded-xl flex items-center justify-between text-xs text-rose-900 shadow-xs">
+              <div className="flex items-center space-x-2">
+                <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+                <span className="font-medium">{errorBanner}</span>
+              </div>
+              <button
+                onClick={() => setErrorBanner('')}
+                className="text-rose-700 hover:underline font-semibold ml-4 cursor-pointer shrink-0"
+              >
+                Dismiss
+              </button>
+            </div>
+          )}
+
           {/* Audio Feedback Notification Banner (if any) */}
           {audioFeedbackNotice && (
             <div className="bg-indigo-50 border border-indigo-200 px-4 py-2.5 rounded-xl flex items-center justify-between text-xs text-indigo-900 shadow-xs animate-fadeIn">
@@ -1549,7 +1644,7 @@ function EchoTrustDashboard({ user, onLogout, onGoHome }) {
                   interruptAudioPlayback();
                   setAudioFeedbackNotice('');
                 }}
-                className="text-indigo-700 hover:underline font-semibold"
+                className="text-indigo-700 hover:underline font-semibold cursor-pointer"
               >
                 Dismiss
               </button>
@@ -1559,157 +1654,113 @@ function EchoTrustDashboard({ user, onLogout, onGoHome }) {
           {/* =========================================================
               TAB: ANALYTICS (THE REDESIGNED SHOWCASE)
              ========================================================= */}
-          {activeTab === 'analytics' && (
+          {activeTab === 'analytics' && (() => {
+            const ds = analyticsData?.dashboard_stats || dashboardStats || {};
+            const mlInfo = analyticsData?.ml_learning_status || analyticsData?.ml_model_insights;
+            const corrChart = analyticsData?.corrections_by_entity_chart || [];
+            const confChart = analyticsData?.confidence_distribution_chart || [];
+            return (
             <div className="space-y-6">
-              {/* --- SECTION 4: ANALYTICS KPI CARDS (4 in a single responsive row) --- */}
+              {/* --- REAL BACKEND ANALYTICS KPI CARDS --- */}
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
-                {/* Card 1: First Attempt Confirmation (Emerald Theme) */}
-                <div className="bg-white rounded-2xl border border-slate-200/90 p-5 shadow-xs hover:shadow-md transition-all border-l-4 border-l-emerald-600 relative overflow-hidden group">
+                <div className="bg-white rounded-2xl border border-slate-200/90 p-5 shadow-xs hover:shadow-md transition-all border-l-4 border-l-emerald-600">
                   <div className="flex items-center justify-between">
-                    <p className="text-xs font-bold uppercase tracking-wider text-slate-500">First Attempt Confirmation</p>
-                    <div className="w-10 h-10 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center border border-emerald-100 group-hover:scale-105 transition-transform">
+                    <p className="text-xs font-bold uppercase tracking-wider text-slate-500">Entity Confirmation Accuracy</p>
+                    <div className="w-10 h-10 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center border border-emerald-100">
                       <CheckCircle2 className="w-5 h-5" />
                     </div>
                   </div>
                   <div className="mt-3 flex items-baseline justify-between">
-                    <span className="text-3xl font-extrabold text-slate-900 tracking-tight">89.4%</span>
-                    <span className="inline-flex items-center space-x-0.5 text-xs font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-lg border border-emerald-200">
-                      <ArrowUpRight className="w-3.5 h-3.5" />
-                      <span>+2.3%</span>
+                    <span className="text-3xl font-extrabold text-slate-900 tracking-tight">{ds.entity_accuracy ?? 0}%</span>
+                    <span className="text-xs font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-lg border border-emerald-200">
+                      {ds.verified_entities ?? 0} / {ds.total_entities ?? 0} entities
                     </span>
                   </div>
-                  <p className="text-[11px] text-slate-400 mt-1.5 font-medium">Direct verbal match rate with NATO prompts</p>
+                  <p className="text-[11px] text-slate-400 mt-1.5 font-medium">Real confirmed entities ratio in database</p>
                 </div>
 
-                {/* Card 2: Correction Recovery Rate (Green Theme) */}
-                <div className="bg-white rounded-2xl border border-slate-200/90 p-5 shadow-xs hover:shadow-md transition-all border-l-4 border-l-emerald-500 relative overflow-hidden group">
+                <div className="bg-white rounded-2xl border border-slate-200/90 p-5 shadow-xs hover:shadow-md transition-all border-l-4 border-l-teal-500">
                   <div className="flex items-center justify-between">
-                    <p className="text-xs font-bold uppercase tracking-wider text-slate-500">Correction Recovery Rate</p>
-                    <div className="w-10 h-10 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center border border-emerald-100 group-hover:scale-105 transition-transform">
+                    <p className="text-xs font-bold uppercase tracking-wider text-slate-500">Corrections Resolved</p>
+                    <div className="w-10 h-10 rounded-xl bg-teal-50 text-teal-600 flex items-center justify-center border border-teal-100">
                       <RefreshCw className="w-5 h-5" />
                     </div>
                   </div>
                   <div className="mt-3 flex items-baseline justify-between">
-                    <span className="text-3xl font-extrabold text-slate-900 tracking-tight">97.8%</span>
-                    <span className="inline-flex items-center space-x-1 text-xs font-bold text-emerald-700 bg-emerald-50 px-2.5 py-0.5 rounded-lg border border-emerald-200">
-                      <Check className="w-3 h-3 text-emerald-600" />
-                      <span>Resolved in 1 loop</span>
+                    <span className="text-3xl font-extrabold text-slate-900 tracking-tight">{ds.corrections_run ?? 0}</span>
+                    <span className="text-xs font-bold text-teal-700 bg-teal-50 px-2 py-0.5 rounded-lg border border-teal-200">
+                      {mlInfo?.status === 'trained' ? 'ML Fitted' : 'Accumulating'}
                     </span>
                   </div>
-                  <p className="text-[11px] text-slate-400 mt-1.5 font-medium">Automatic character disambiguation loop</p>
+                  <p className="text-[11px] text-slate-400 mt-1.5 font-medium">Logged phonetic disambiguation corrections</p>
                 </div>
 
-                {/* Card 3: Average Verification Time (Purple Theme) */}
-                <div className="bg-white rounded-2xl border border-slate-200/90 p-5 shadow-xs hover:shadow-md transition-all border-l-4 border-l-purple-600 relative overflow-hidden group">
+                <div className="bg-white rounded-2xl border border-slate-200/90 p-5 shadow-xs hover:shadow-md transition-all border-l-4 border-l-purple-600">
                   <div className="flex items-center justify-between">
-                    <p className="text-xs font-bold uppercase tracking-wider text-slate-500">Average Verification Time</p>
-                    <div className="w-10 h-10 rounded-xl bg-purple-50 text-purple-600 flex items-center justify-center border border-purple-100 group-hover:scale-105 transition-transform">
+                    <p className="text-xs font-bold uppercase tracking-wider text-slate-500">Average Confidence</p>
+                    <div className="w-10 h-10 rounded-xl bg-purple-50 text-purple-600 flex items-center justify-center border border-purple-100">
                       <Timer className="w-5 h-5" />
                     </div>
                   </div>
                   <div className="mt-3 flex items-baseline justify-between">
-                    <span className="text-3xl font-extrabold text-slate-900 tracking-tight">42.6 sec</span>
-                    <span className="inline-flex items-center space-x-0.5 text-xs font-bold text-purple-700 bg-purple-50 px-2 py-0.5 rounded-lg border border-purple-200">
-                      <Zap className="w-3 h-3 text-purple-600 mr-0.5" />
-                      <span>-0.8 sec</span>
+                    <span className="text-3xl font-extrabold text-slate-900 tracking-tight">{ds.average_confidence ?? 0}%</span>
+                    <span className="text-xs font-bold text-purple-700 bg-purple-50 px-2 py-0.5 rounded-lg border border-purple-200">
+                      8 BFSI Entities
                     </span>
                   </div>
-                  <p className="text-[11px] text-slate-400 mt-1.5 font-medium">Across 6 standard BFSI extracted entities</p>
+                  <p className="text-[11px] text-slate-400 mt-1.5 font-medium">Mean acoustic & validation score from DB</p>
                 </div>
 
-                {/* Card 4: Fraud / Mismatch Prevention (Pink Theme) */}
-                <div className="bg-white rounded-2xl border border-slate-200/90 p-5 shadow-xs hover:shadow-md transition-all border-l-4 border-l-pink-500 relative overflow-hidden group">
+                <div className="bg-white rounded-2xl border border-slate-200/90 p-5 shadow-xs hover:shadow-md transition-all border-l-4 border-l-rose-500">
                   <div className="flex items-center justify-between">
-                    <p className="text-xs font-bold uppercase tracking-wider text-slate-500">Fraud / Mismatch Prevention</p>
-                    <div className="w-10 h-10 rounded-xl bg-pink-50 text-pink-600 flex items-center justify-center border border-pink-100 group-hover:scale-105 transition-transform">
+                    <p className="text-xs font-bold uppercase tracking-wider text-slate-500">Flagged / Failed Verifications</p>
+                    <div className="w-10 h-10 rounded-xl bg-rose-50 text-rose-600 flex items-center justify-center border border-rose-100">
                       <ShieldAlert className="w-5 h-5" />
                     </div>
                   </div>
                   <div className="mt-3 flex items-baseline justify-between">
-                    <span className="text-3xl font-extrabold text-slate-900 tracking-tight">323 cases</span>
-                    <span className="inline-flex items-center space-x-0.5 text-xs font-bold text-pink-700 bg-pink-50 px-2 py-0.5 rounded-lg border border-pink-200">
-                      <ArrowUpRight className="w-3.5 h-3.5" />
-                      <span>+12%</span>
+                    <span className="text-3xl font-extrabold text-slate-900 tracking-tight">{ds.failed_verifications ?? 0}</span>
+                    <span className="text-xs font-bold text-rose-700 bg-rose-50 px-2 py-0.5 rounded-lg border border-rose-200">
+                      {ds.pending_confirmations ?? 0} pending
                     </span>
                   </div>
-                  <p className="text-[11px] text-slate-400 mt-1.5 font-medium">Prevented wrong policy or loan dispatches</p>
+                  <p className="text-[11px] text-slate-400 mt-1.5 font-medium">Unconfirmed / rejected KYC records blocked</p>
                 </div>
               </div>
 
-              {/* --- SECTION 5: TWO LARGE CHARTS --- */}
+              {/* --- TWO REAL-DATA CHARTS --- */}
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                {/* Left Chart: Most Frequently Corrected Entity Types */}
-                <div className="bg-white rounded-2xl border border-slate-200/90 p-6 shadow-xs hover:shadow-md transition">
+                <div className="bg-white rounded-2xl border border-slate-200/90 p-6 shadow-xs">
                   <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-4">
                     <div>
-                      <h3 className="font-bold text-slate-900 text-base">Most Frequently Corrected Entity Types</h3>
-                      <p className="text-xs text-slate-500 mt-0.5">Frequency of first-pass confirmations vs correction triggers</p>
-                    </div>
-                    {/* Visual Legend */}
-                    <div className="flex items-center space-x-3 text-xs font-semibold">
-                      <span className="flex items-center text-slate-700">
-                        <span className="w-3 h-3 rounded-md bg-[#10B981] mr-1.5 shadow-2xs"></span>
-                        First-Pass Confirmed
-                      </span>
-                      <span className="flex items-center text-slate-700">
-                        <span className="w-3 h-3 rounded-md bg-[#F59E0B] mr-1.5 shadow-2xs"></span>
-                        Correction Loop
-                      </span>
+                      <h3 className="font-bold text-slate-900 text-base">Confirmed vs Corrected by Entity</h3>
+                      <p className="text-xs text-slate-500 mt-0.5">Live counts directly aggregated from SQLite/Supabase logs</p>
                     </div>
                   </div>
-
                   <div className="h-72">
                     <ResponsiveContainer width="100%" height="100%">
-                      <BarChart
-                        data={analyticsData?.corrections_by_entity_chart || [
-                          { entity: 'Full Name', autoConfirmed: 2400, corrections: 340 },
-                          { entity: 'Address', autoConfirmed: 1800, corrections: 520 },
-                          { entity: 'Bank Account', autoConfirmed: 2900, corrections: 210 },
-                          { entity: 'Phone Number', autoConfirmed: 3200, corrections: 95 },
-                          { entity: 'PAN / Tax', autoConfirmed: 2100, corrections: 290 },
-                          { entity: 'DOB', autoConfirmed: 3500, corrections: 40 },
-                        ]}
-                        margin={{ top: 15, right: 10, left: -10, bottom: 5 }}
-                      >
+                      <BarChart data={corrChart} margin={{ top: 15, right: 10, left: -10, bottom: 5 }}>
                         <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#F1F5F9" />
                         <XAxis dataKey="entity" stroke="#64748B" fontSize={11} fontWeight={600} tickLine={false} />
-                        <YAxis stroke="#94A3B8" fontSize={11} tickLine={false} axisLine={false} />
-                        <Tooltip
-                          contentStyle={{ backgroundColor: '#0F172A', borderColor: '#334155', borderRadius: '12px', color: '#fff', fontSize: '12px' }}
-                          itemStyle={{ color: '#E2E8F0' }}
-                        />
-                        <Bar dataKey="autoConfirmed" fill="#10B981" name="First-Pass Confirmed" radius={[5, 5, 0, 0]} />
-                        <Bar dataKey="corrections" fill="#F59E0B" name="Required Correction Loop" radius={[5, 5, 0, 0]} />
+                        <YAxis stroke="#94A3B8" fontSize={11} tickLine={false} axisLine={false} allowDecimals={false} />
+                        <Tooltip contentStyle={{ backgroundColor: '#0F172A', borderColor: '#334155', borderRadius: '12px', color: '#fff', fontSize: '12px' }} />
+                        <Bar dataKey="autoConfirmed" fill="#10B981" name="Confirmed" radius={[5, 5, 0, 0]} />
+                        <Bar dataKey="corrections" fill="#F59E0B" name="Corrected" radius={[5, 5, 0, 0]} />
                       </BarChart>
                     </ResponsiveContainer>
                   </div>
                 </div>
 
-                {/* Right Chart: Confidence Score Distribution (Purple line + light purple gradient area) */}
-                <div className="bg-white rounded-2xl border border-slate-200/90 p-6 shadow-xs hover:shadow-md transition">
+                <div className="bg-white rounded-2xl border border-slate-200/90 p-6 shadow-xs">
                   <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-4">
                     <div>
                       <h3 className="font-bold text-slate-900 text-base">Confidence Score Distribution</h3>
-                      <p className="text-xs text-slate-500 mt-0.5">Acoustic confidence distribution across verified voice streams</p>
+                      <p className="text-xs text-slate-500 mt-0.5">Acoustic confidence brackets from extracted entity records</p>
                     </div>
-                    <span className="text-xs font-semibold px-2.5 py-1 rounded-lg bg-purple-50 text-purple-700 border border-purple-200 self-start sm:self-auto">
-                      Acoustic Calibration
-                    </span>
                   </div>
-
                   <div className="h-72">
                     <ResponsiveContainer width="100%" height="100%">
-                      <AreaChart
-                        data={analyticsData?.confidence_distribution_chart || [
-                          { bracket: 'Below 60%', count: 45 },
-                          { bracket: '60–70%', count: 120 },
-                          { bracket: '70–80%', count: 340 },
-                          { bracket: '80–95%', count: 1420 },
-                          { bracket: '90–95%', count: 2450 },
-                          { bracket: '95–100%', count: 4120 },
-                        ]}
-                        margin={{ top: 15, right: 10, left: -10, bottom: 5 }}
-                      >
+                      <AreaChart data={confChart} margin={{ top: 15, right: 10, left: -10, bottom: 5 }}>
                         <defs>
                           <linearGradient id="purpleGradient" x1="0" y1="0" x2="0" y2="1">
                             <stop offset="5%" stopColor="#8B5CF6" stopOpacity={0.4} />
@@ -1718,101 +1769,16 @@ function EchoTrustDashboard({ user, onLogout, onGoHome }) {
                         </defs>
                         <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#F1F5F9" />
                         <XAxis dataKey="bracket" stroke="#64748B" fontSize={11} fontWeight={600} tickLine={false} />
-                        <YAxis stroke="#94A3B8" fontSize={11} tickLine={false} axisLine={false} />
-                        <Tooltip
-                          contentStyle={{ backgroundColor: '#0F172A', borderColor: '#334155', borderRadius: '12px', color: '#fff', fontSize: '12px' }}
-                          itemStyle={{ color: '#E2E8F0' }}
-                        />
-                        <Area
-                          type="monotone"
-                          dataKey="count"
-                          stroke="#8B5CF6"
-                          strokeWidth={3}
-                          fill="url(#purpleGradient)"
-                          name="Sessions in Bracket"
-                          dot={{ r: 4, stroke: '#8B5CF6', strokeWidth: 2, fill: '#FFFFFF' }}
-                          activeDot={{ r: 6, fill: '#8B5CF6' }}
-                        />
+                        <YAxis stroke="#94A3B8" fontSize={11} tickLine={false} axisLine={false} allowDecimals={false} />
+                        <Tooltip contentStyle={{ backgroundColor: '#0F172A', borderColor: '#334155', borderRadius: '12px', color: '#fff', fontSize: '12px' }} />
+                        <Area type="monotone" dataKey="count" stroke="#8B5CF6" strokeWidth={3} fill="url(#purpleGradient)" name="Entities in Bracket" />
                       </AreaChart>
                     </ResponsiveContainer>
                   </div>
                 </div>
               </div>
 
-              {/* --- SECTION 6: KEY INSIGHTS SECTION (Full-Width Card Below Charts) --- */}
-              <div className="bg-white rounded-2xl border border-slate-200/90 p-6 shadow-xs">
-                <div className="flex items-center space-x-2.5 pb-4 border-b border-slate-100">
-                  <div className="p-2 rounded-xl bg-amber-50 text-amber-600 border border-amber-200">
-                    <Sparkles className="w-5 h-5" />
-                  </div>
-                  <div>
-                    <h3 className="font-bold text-slate-900 text-base">Key Operational Insights</h3>
-                    <p className="text-xs text-slate-500">Automated performance summary based on 14,800+ customer confirmation interactions</p>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-5 mt-5">
-                  {/* Insight 1: First Attempt Success */}
-                  <div className="bg-emerald-50/50 rounded-xl p-4 border border-emerald-100 flex flex-col justify-between">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center space-x-2">
-                        <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-                        <span className="text-xs font-bold text-slate-900">First Attempt Success</span>
-                      </div>
-                      <span className="text-xs font-bold text-emerald-700 bg-white px-2 py-0.5 rounded border border-emerald-200">
-                        +2.3%
-                      </span>
-                    </div>
-                    <div className="mt-3">
-                      <div className="text-2xl font-extrabold text-emerald-900">89.4%</div>
-                      <p className="text-xs text-slate-600 mt-1 leading-relaxed">
-                        First Attempt Success reached <strong>89.4%</strong>, improved by <strong>2.3%</strong> with phonetic NATO prompts preventing homophone confusion.
-                      </p>
-                    </div>
-                  </div>
-
-                  {/* Insight 2: Average Verification Time */}
-                  <div className="bg-purple-50/40 rounded-xl p-4 border border-purple-100 flex flex-col justify-between">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center space-x-2">
-                        <Timer className="w-4 h-4 text-purple-600" />
-                        <span className="text-xs font-bold text-slate-900">Average Verification Time</span>
-                      </div>
-                      <span className="text-xs font-bold text-purple-700 bg-purple-50 px-2 py-0.5 rounded border border-purple-200">
-                        -0.8 sec
-                      </span>
-                    </div>
-                    <div className="mt-3">
-                      <div className="text-2xl font-extrabold text-purple-900">42.6 seconds</div>
-                      <p className="text-xs text-slate-600 mt-1 leading-relaxed">
-                        Average Verification Time dropped to <strong>42.6 seconds</strong>, reduced by <strong>0.8 seconds</strong> across 6 BFSI identity fields.
-                      </p>
-                    </div>
-                  </div>
-
-                  {/* Insight 3: Fraud Checks & Mismatch Prevention */}
-                  <div className="bg-pink-50/40 rounded-xl p-4 border border-pink-100 flex flex-col justify-between">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center space-x-2">
-                        <ShieldAlert className="w-4 h-4 text-pink-600" />
-                        <span className="text-xs font-bold text-slate-900">Fraud & Mismatch Prevention</span>
-                      </div>
-                      <span className="text-xs font-bold text-pink-700 bg-pink-50 px-2 py-0.5 rounded border border-pink-200">
-                        +12% gain
-                      </span>
-                    </div>
-                    <div className="mt-3">
-                      <div className="text-2xl font-extrabold text-pink-900">323 cases</div>
-                      <p className="text-xs text-slate-600 mt-1 leading-relaxed">
-                        Fraud checks identified <strong>323 mismatch cases</strong>, reflecting a <strong>12% improvement</strong> in preventing misattributed accounts.
-                      </p>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              {/* Machine Learning Correction Model Insights Card */}
-              {analyticsData?.ml_model_insights && (
+              {mlInfo && (
                 <div className="bg-white rounded-2xl border border-slate-200/90 p-5 shadow-xs flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
                   <div className="flex items-center space-x-3">
                     <div className="p-2.5 rounded-xl bg-indigo-50 text-indigo-600 border border-indigo-100">
@@ -1822,19 +1788,18 @@ function EchoTrustDashboard({ user, onLogout, onGoHome }) {
                       <div className="flex items-center space-x-2">
                         <h4 className="font-bold text-slate-900 text-sm">Correction Machine Learning Engine</h4>
                         <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200">
-                          {analyticsData.ml_model_insights.status === 'trained' ? 'Model Trained & Active' : 'Accumulating Samples'}
+                          {mlInfo.status === 'trained' ? 'Model Trained & Active' : 'Accumulating Samples'}
                         </span>
                       </div>
                       <p className="text-xs text-slate-500 mt-0.5">
-                        {analyticsData.ml_model_insights.message || 'Analyzed phonetic substitutions from verified audit logs.'}
+                        {mlInfo.message || 'Analyzing phonetic substitutions from database correction logs.'}
                       </p>
                     </div>
                   </div>
-
-                  {analyticsData.ml_model_insights.top_acoustic_confusions && analyticsData.ml_model_insights.top_acoustic_confusions.length > 0 && (
-                    <div className="flex items-center space-x-2 text-xs">
+                  {mlInfo.top_acoustic_confusions && mlInfo.top_acoustic_confusions.length > 0 && (
+                    <div className="flex flex-wrap items-center gap-2 text-xs">
                       <span className="text-slate-400 font-semibold">Learned Confusions:</span>
-                      {analyticsData.ml_model_insights.top_acoustic_confusions.slice(0, 3).map((item, idx) => (
+                      {mlInfo.top_acoustic_confusions.slice(0, 3).map((item, idx) => (
                         <span key={idx} className="bg-slate-100 text-slate-700 px-2 py-1 rounded-md font-mono text-[11px] font-bold border border-slate-200">
                           {item.substitution}
                         </span>
@@ -1844,121 +1809,209 @@ function EchoTrustDashboard({ user, onLogout, onGoHome }) {
                 </div>
               )}
             </div>
-          )}
+            );
+          })()}
 
           {/* =========================================================
               TAB: DASHBOARD
              ========================================================= */}
-          {activeTab === 'dashboard' && (
+          {activeTab === 'dashboard' && (() => {
+            const sttInfo = healthStatus?.stt || voiceApiStatus?.stt || {};
+            const ttsInfo = healthStatus?.tts || voiceApiStatus?.tts || {};
+            const llmInfo = healthStatus?.llm || voiceApiStatus?.llm || {};
+            const dbInfo = healthStatus?.database || {};
+            const recentConvs = dashboardStats?.recent_conversations || [];
+            return (
             <div className="space-y-6">
               <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
                 <div>
-                  <h2 className="text-xl font-bold text-slate-900 tracking-tight">Executive Verification Dashboard</h2>
-                  <p className="text-xs text-slate-500">Real-time phonetic read-back confirmation and speech accuracy monitoring</p>
+                  <h2 className="text-xl font-bold text-slate-900 tracking-tight">Automated Platform Telemetry & Executive Dashboard</h2>
+                  <p className="text-xs text-slate-500">100% live database metrics, Gnani AI STT/TTS service status, and real-time verification logs</p>
                 </div>
-                <button
-                  onClick={() => setActiveTab('live')}
-                  className="flex items-center space-x-2 bg-gradient-to-r from-emerald-600 via-teal-600 to-green-600 hover:from-emerald-500 hover:to-green-500 text-white px-4 py-2 rounded-xl font-bold text-xs shadow-md shadow-emerald-600/20 transition cursor-pointer"
-                >
-                  <Mic className="w-4 h-4" />
-                  <span>Open Live Session</span>
-                </button>
+                <div className="flex items-center space-x-2">
+                  <button
+                    onClick={() => { loadDashboardData(); loadHealthStatus(); }}
+                    className="px-3 py-2 bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 rounded-xl font-semibold text-xs flex items-center space-x-1.5 cursor-pointer"
+                  >
+                    <RefreshCw className="w-3.5 h-3.5 text-emerald-600" />
+                    <span>Refresh</span>
+                  </button>
+                  <button
+                    onClick={() => setActiveTab('live')}
+                    className="flex items-center space-x-2 bg-gradient-to-r from-emerald-600 via-teal-600 to-green-600 hover:from-emerald-500 hover:to-green-500 text-white px-4 py-2 rounded-xl font-bold text-xs shadow-md shadow-emerald-600/20 transition cursor-pointer"
+                  >
+                    <Mic className="w-4 h-4" />
+                    <span>Open Live Session</span>
+                  </button>
+                </div>
               </div>
 
-              {/* Statistics Cards */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+              {/* 7 Real Database Statistics Cards */}
+              <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-3">
                 {[
-                  { title: 'Total Sessions', value: dashboardStats ? dashboardStats.total_sessions.toLocaleString() : '14,892', change: '+12.4%', isUp: true, desc: 'Past 30 days', color: 'border-l-emerald-600' },
-                  { title: 'Successfully Verified', value: dashboardStats ? dashboardStats.verified_sessions.toLocaleString() : '13,954', change: '+8.1%', isUp: true, desc: '93.7% First-pass', color: 'border-l-teal-500' },
-                  { title: 'Pending Confirmation', value: dashboardStats ? dashboardStats.pending_sessions.toLocaleString() : '342', change: '-4.2%', isUp: false, desc: 'Awaiting customer OK', color: 'border-l-amber-500' },
-                  { title: 'Correction Loop Run', value: dashboardStats ? dashboardStats.corrections_run.toLocaleString() : '596', change: '-18.5%', isUp: true, desc: 'Errors caught & fixed', color: 'border-l-indigo-500' },
-                  { title: 'Overall Accuracy Rate', value: dashboardStats ? `${dashboardStats.accuracy_rate}%` : '98.6%', change: '+0.8%', isUp: true, desc: 'Post read-back confirm', color: 'border-l-emerald-500' },
+                  { title: 'Total Sessions', value: (dashboardStats?.total_sessions ?? 0).toLocaleString(), desc: 'All DB records', color: 'border-l-emerald-600' },
+                  { title: 'Active Calls', value: (dashboardStats?.active_conversations ?? 0).toLocaleString(), desc: 'In progress', color: 'border-l-blue-500' },
+                  { title: 'Completed', value: (dashboardStats?.completed_verifications ?? 0).toLocaleString(), desc: 'Verified OK', color: 'border-l-teal-500' },
+                  { title: 'Pending Confirms', value: (dashboardStats?.pending_confirmations ?? 0).toLocaleString(), desc: 'Unconfirmed slots', color: 'border-l-amber-500' },
+                  { title: 'Failed / Rejected', value: (dashboardStats?.failed_verifications ?? 0).toLocaleString(), desc: 'Mismatch / blocked', color: 'border-l-rose-500' },
+                  { title: 'Entity Accuracy', value: `${dashboardStats?.entity_accuracy ?? 0}%`, desc: `${dashboardStats?.verified_entities ?? 0}/${dashboardStats?.total_entities ?? 0} verified`, color: 'border-l-emerald-500' },
+                  { title: 'Avg Confidence', value: `${dashboardStats?.average_confidence ?? 0}%`, desc: 'Mean STT/KYC', color: 'border-l-indigo-500' },
                 ].map((stat, idx) => (
-                  <div key={idx} className={`bg-white rounded-2xl border border-slate-200/90 p-4 shadow-xs border-l-4 ${stat.color}`}>
-                    <p className="text-xs font-bold text-slate-500 uppercase tracking-wider">{stat.title}</p>
-                    <div className="mt-2 flex items-baseline justify-between">
-                      <span className="text-2xl font-extrabold text-slate-900">{stat.value}</span>
-                      <span className={`text-xs font-semibold flex items-center ${stat.isUp ? 'text-emerald-600' : 'text-amber-600'}`}>
-                        {stat.isUp ? <ArrowUpRight className="w-3.5 h-3.5 mr-0.5" /> : <ArrowDownRight className="w-3.5 h-3.5 mr-0.5" />}
-                        {stat.change}
-                      </span>
-                    </div>
-                    <p className="text-[11px] text-slate-400 mt-1">{stat.desc}</p>
+                  <div key={idx} className={`bg-white rounded-2xl border border-slate-200/90 p-3.5 shadow-xs border-l-4 ${stat.color}`}>
+                    <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider truncate">{stat.title}</p>
+                    <div className="mt-1.5 text-2xl font-extrabold text-slate-900">{stat.value}</div>
+                    <p className="text-[10px] text-slate-400 mt-0.5 truncate">{stat.desc}</p>
                   </div>
                 ))}
               </div>
 
-              {/* Recent Verification Activity Table */}
-              <div className="bg-white rounded-2xl border border-slate-200/90 shadow-xs overflow-hidden">
-                <div className="p-5 border-b border-slate-100 flex flex-col sm:flex-row justify-between sm:items-center gap-3">
-                  <div>
-                    <h3 className="font-bold text-slate-900 text-sm">Recent Verification Sessions</h3>
-                    <p className="text-xs text-slate-500">Live feed of voice capture and phonetic confirmations</p>
+              {/* Live API / STT / TTS / LLM Health Status Cards */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                <div className="bg-white rounded-2xl border border-slate-200 p-4 shadow-xs">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-slate-700 flex items-center space-x-1.5">
+                      <Server className="w-4 h-4 text-emerald-600" />
+                      <span>Backend & Database</span>
+                    </span>
+                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${dbInfo.connected ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'}`}>
+                      {dbInfo.connected ? 'Connected' : 'Offline'}
+                    </span>
                   </div>
-                  <button onClick={() => setActiveTab('history')} className="text-emerald-700 hover:text-emerald-900 text-xs font-semibold flex items-center cursor-pointer">
-                    <span>View All in History</span>
-                    <ChevronRight className="w-3.5 h-3.5 ml-1" />
-                  </button>
+                  <p className="text-xs text-slate-600 mt-2 font-mono">{dbInfo.engine || 'SQLite Local'}</p>
+                  <p className="text-[11px] text-slate-400 mt-0.5">Strict JWT + unconfirmed isolation</p>
                 </div>
 
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left text-xs">
-                    <thead className="bg-slate-50 text-slate-600 font-semibold border-b border-slate-200 uppercase tracking-wider text-[11px]">
-                      <tr>
-                        <th className="py-3 px-4">Session & Customer</th>
-                        <th className="py-3 px-4">Application No.</th>
-                        <th className="py-3 px-4">Confidence Score</th>
-                        <th className="py-3 px-4">Corrections</th>
-                        <th className="py-3 px-4">Status</th>
-                        <th className="py-3 px-4 text-right">Action</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100 text-slate-700">
-                      {recentSessions.map((sess) => (
-                        <tr key={sess.id} className="hover:bg-emerald-50/30 transition">
-                          <td className="py-3 px-4">
-                            <div className="font-bold text-slate-900">{sess.customer}</div>
-                            <div className="text-[11px] text-slate-400 font-mono">{sess.id} • {sess.customerId}</div>
-                          </td>
-                          <td className="py-3 px-4 font-mono font-medium text-slate-600">{sess.appNo}</td>
-                          <td className="py-3 px-4">
-                            <div className="flex items-center space-x-2">
-                              <span className="font-bold text-slate-900">{sess.finalConf}%</span>
-                              <div className="w-16 bg-slate-100 h-1.5 rounded-full overflow-hidden">
-                                <div className={`h-full ${sess.finalConf > 80 ? 'bg-emerald-500' : 'bg-amber-500'}`} style={{ width: `${sess.finalConf}%` }}></div>
-                              </div>
-                            </div>
-                          </td>
-                          <td className="py-3 px-4">
-                            {sess.corrections > 0 ? (
-                              <span className="text-amber-700 bg-amber-50 px-2 py-0.5 rounded font-medium border border-amber-200">
-                                {sess.corrections} Loop{sess.corrections > 1 ? 's' : ''}
-                              </span>
-                            ) : (
-                              <span className="text-slate-400">0 (Direct)</span>
-                            )}
-                          </td>
-                          <td className="py-3 px-4">
-                            <span className={`px-2.5 py-0.5 rounded-full font-medium inline-flex items-center space-x-1 ${
-                              sess.status === 'Verified' ? 'bg-emerald-100 text-emerald-800' : 'bg-teal-50 text-teal-800 border border-teal-200'
-                            }`}>
-                              <span className={`w-1.5 h-1.5 rounded-full mr-1.5 ${sess.status === 'Verified' ? 'bg-emerald-500' : 'bg-teal-500'}`}></span>
-                              {sess.status}
-                            </span>
-                          </td>
-                          <td className="py-3 px-4 text-right">
-                            <button onClick={() => inspectSession(sess)} className="text-emerald-700 hover:text-emerald-900 font-semibold hover:underline inline-flex items-center cursor-pointer">
-                              Inspect <ChevronRight className="w-3.5 h-3.5 ml-0.5" />
-                            </button>
-                          </td>
+                <div className="bg-white rounded-2xl border border-slate-200 p-4 shadow-xs">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-slate-700 flex items-center space-x-1.5">
+                      <Mic className="w-4 h-4 text-teal-600" />
+                      <span>Gnani STT Engine</span>
+                    </span>
+                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${sttInfo.connected ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'}`}>
+                      {sttInfo.status || (sttInfo.connected ? 'Ready' : 'Offline')}
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-600 mt-2 font-mono">{sttInfo.model || 'prisma-v3.0'} • {sttInfo.language_code || 'indic-auto'}</p>
+                  <p className="text-[11px] text-slate-400 mt-0.5">
+                    {sttInfo.last_latency_ms ? `Latency: ${sttInfo.last_latency_ms}ms (${sttInfo.last_detected_language || 'hi/en'})` : 'hi-IN + en-IN Hinglish'}
+                  </p>
+                </div>
+
+                <div className="bg-white rounded-2xl border border-slate-200 p-4 shadow-xs">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-slate-700 flex items-center space-x-1.5">
+                      <Volume2 className="w-4 h-4 text-indigo-600" />
+                      <span>Gnani TTS Engine</span>
+                    </span>
+                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${ttsInfo.connected ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'}`}>
+                      {ttsInfo.status || (ttsInfo.connected ? 'Ready' : 'Offline')}
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-600 mt-2 font-mono">{ttsInfo.model || 'timbre-v3.0'} • {ttsInfo.voice || 'Devansh'}</p>
+                  <p className="text-[11px] text-slate-400 mt-0.5">
+                    {ttsInfo.last_latency_ms ? `Latency: ${ttsInfo.last_latency_ms}ms` : 'Male Conversational Hinglish'}
+                  </p>
+                </div>
+
+                <div className="bg-white rounded-2xl border border-slate-200 p-4 shadow-xs">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-slate-700 flex items-center space-x-1.5">
+                      <Cpu className="w-4 h-4 text-purple-600" />
+                      <span>Conversation / LLM</span>
+                    </span>
+                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${llmInfo.configured ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'}`}>
+                      {llmInfo.configured ? llmInfo.status || 'Connected' : 'Missing Key (NLU Active)'}
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-600 mt-2 font-mono truncate">{llmInfo.provider || 'deterministic-nlu'}</p>
+                  <p className="text-[11px] text-slate-400 mt-0.5 truncate">{llmInfo.model || 'BFSI Multi-Turn State Machine'}</p>
+                </div>
+              </div>
+
+              {/* Recent Conversation History & Recent Sessions */}
+              <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+                <div className="lg:col-span-5 bg-white rounded-2xl border border-slate-200/90 shadow-xs overflow-hidden flex flex-col">
+                  <div className="p-4 border-b border-slate-100 flex items-center justify-between">
+                    <div>
+                      <h3 className="font-bold text-slate-900 text-sm flex items-center space-x-1.5">
+                        <MessageSquare className="w-4 h-4 text-emerald-600" />
+                        <span>Recent Conversation History</span>
+                      </h3>
+                      <p className="text-[11px] text-slate-500">Latest real customer dialogues stored in DB</p>
+                    </div>
+                  </div>
+                  <div className="p-4 space-y-3 flex-1 overflow-y-auto max-h-80">
+                    {recentConvs.length === 0 ? (
+                      <div className="text-center py-8 text-xs text-slate-400 italic">
+                        No recorded conversations yet. Start a live verification session to inspect dialogue turns.
+                      </div>
+                    ) : recentConvs.map((conv, i) => (
+                      <div key={i} className="p-3 rounded-xl bg-slate-50 border border-slate-200/80 text-xs">
+                        <div className="flex items-center justify-between mb-1">
+                          <span className="font-bold text-slate-900">{conv.customer} <span className="font-mono text-[10px] text-slate-400">({conv.session_id})</span></span>
+                          <span className="text-[10px] font-semibold px-2 py-0.5 rounded bg-emerald-100 text-emerald-800">{conv.turns} turns</span>
+                        </div>
+                        <p className="text-slate-600 line-clamp-2 italic">"{conv.last_message}"</p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Recent Verification Activity Table */}
+                <div className="lg:col-span-7 bg-white rounded-2xl border border-slate-200/90 shadow-xs overflow-hidden">
+                  <div className="p-4 border-b border-slate-100 flex justify-between items-center gap-3">
+                    <div>
+                      <h3 className="font-bold text-slate-900 text-sm">Recent Verification Sessions</h3>
+                      <p className="text-[11px] text-slate-500">Live feed of DB sessions and confirmations</p>
+                    </div>
+                    <button onClick={() => setActiveTab('history')} className="text-emerald-700 hover:text-emerald-900 text-xs font-semibold flex items-center cursor-pointer">
+                      <span>View All</span>
+                      <ChevronRight className="w-3.5 h-3.5 ml-1" />
+                    </button>
+                  </div>
+
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left text-xs">
+                      <thead className="bg-slate-50 text-slate-600 font-semibold border-b border-slate-200 uppercase tracking-wider text-[11px]">
+                        <tr>
+                          <th className="py-3 px-4">Session & Customer</th>
+                          <th className="py-3 px-4">Confidence</th>
+                          <th className="py-3 px-4">Corrections</th>
+                          <th className="py-3 px-4">Status</th>
+                          <th className="py-3 px-4 text-right">Action</th>
                         </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100 text-slate-700">
+                        {recentSessions.length === 0 ? (
+                          <tr>
+                            <td colSpan={5} className="py-8 text-center text-slate-400 italic">No database sessions yet.</td>
+                          </tr>
+                        ) : recentSessions.map((sess) => (
+                          <tr key={sess.id} className="hover:bg-emerald-50/30 transition">
+                            <td className="py-3 px-4">
+                              <div className="font-bold text-slate-900">{sess.customer}</div>
+                              <div className="text-[11px] text-slate-400 font-mono">{sess.id}</div>
+                            </td>
+                            <td className="py-3 px-4 font-bold text-slate-900">{sess.finalConf}%</td>
+                            <td className="py-3 px-4">{sess.corrections}</td>
+                            <td className="py-3 px-4">
+                              <span className={`px-2 py-0.5 rounded-full text-[11px] font-medium ${sess.status === 'Verified' ? 'bg-emerald-100 text-emerald-800' : 'bg-teal-50 text-teal-800 border border-teal-200'}`}>
+                                {sess.status}
+                              </span>
+                            </td>
+                            <td className="py-3 px-4 text-right">
+                              <button onClick={() => inspectSession(sess)} className="text-emerald-700 hover:underline font-semibold cursor-pointer">Inspect</button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
                 </div>
               </div>
             </div>
-          )}
+            );
+          })()}
 
           {/* =========================================================
               TAB: LIVE VERIFICATION
@@ -2103,7 +2156,7 @@ function EchoTrustDashboard({ user, onLogout, onGoHome }) {
                             </span>
                           </div>
                           <p className="text-[11px] text-emerald-300/70">
-                            STT: Prisma-v3.0 ({selectedSttLanguage === 'hi-IN' ? 'Hindi / Hinglish' : 'English / Hinglish'}) | TTS: Timbre-v3.0 ({selectedTtsVoice})
+                            STT: Prisma-v3.0 ({selectedSttLanguage === 'indic-auto' ? 'Auto Hinglish (hi-IN + en-IN)' : selectedSttLanguage}) | TTS: Timbre-v3.0 ({selectedTtsVoice})
                           </p>
                         </div>
                       </div>
@@ -2116,8 +2169,9 @@ function EchoTrustDashboard({ user, onLogout, onGoHome }) {
                             value={selectedSttLanguage}
                             onChange={(e) => setSelectedSttLanguage(e.target.value)}
                             className="bg-emerald-950/90 text-emerald-100 text-xs rounded-lg border border-emerald-700/60 px-2 py-1 focus:outline-none focus:ring-1 focus:ring-emerald-400 cursor-pointer"
-                            title="STT Language (Hindi / English / Hinglish only - No Telugu)"
+                            title="STT Language (Hindi, English, and Hinglish Auto)"
                           >
+                            <option value="indic-auto">Hindi + English + Hinglish (Auto)</option>
                             <option value="hi-IN">Hindi / Hinglish (hi-IN)</option>
                             <option value="en-IN">English / Hinglish (en-IN)</option>
                           </select>
@@ -2130,14 +2184,15 @@ function EchoTrustDashboard({ user, onLogout, onGoHome }) {
                             value={selectedTtsVoice}
                             onChange={(e) => setSelectedTtsVoice(e.target.value)}
                             className="bg-emerald-950/90 text-emerald-100 text-xs rounded-lg border border-emerald-700/60 px-2 py-1 focus:outline-none focus:ring-1 focus:ring-emerald-400 cursor-pointer"
-                            title="Select Gnani TTS Voice Tone"
+                            title="Select Gnani Timbre v3.0 Voice Tone"
                           >
-                            <option value="Shivani">Shivani (Indian Female - Ref Audio Tone)</option>
+                            <option value="Devansh">Devansh (Indian Male - Selected Default)</option>
+                            <option value="Yashraj">Yashraj (Indian Male - Deep Tone)</option>
                             <option value="Shubham">Shubham (Indian Male - Conversational)</option>
-                            <option value="Devansh">Devansh (Indian Male - Warm)</option>
                             <option value="Prakash">Prakash (Indian Male - BFSI)</option>
-                            <option value="Kaveri">Kaveri (Indian Female - Professional)</option>
-                            <option value="Nalini">Nalini (Indian Female - Hindi)</option>
+                            <option value="Shivani">Shivani (Indian Female - Hinglish)</option>
+                            <option value="Kaveri">Kaveri (Indian Female - v2.5)</option>
+                            <option value="Nalini">Nalini (Indian Female - v2.5)</option>
                           </select>
                         </div>
                       </div>
@@ -2459,7 +2514,7 @@ function EchoTrustDashboard({ user, onLogout, onGoHome }) {
                   <p className="text-xs text-slate-500">Fine-grained acoustic confidence scores and validation rule compliance</p>
                 </div>
                 <span className="text-xs bg-white px-3 py-1.5 rounded-xl border border-slate-200 text-slate-600 font-medium shadow-2xs">
-                  Showing 6 Extracted Entities for <strong>{currentSessionId || 'No Active Session'}</strong>
+                  Showing {entities.length} Extracted Entities for <strong>{currentSessionId || 'No Active Session'}</strong>
                 </span>
               </div>
 
@@ -2546,14 +2601,19 @@ function EchoTrustDashboard({ user, onLogout, onGoHome }) {
                   <h2 className="text-xl font-bold text-slate-900">Verification Session History & Audit Trail</h2>
                   <p className="text-xs text-slate-500">Immutable audit log of customer affirmations, phonetic prompts, and overrides</p>
                 </div>
-                <a
-                  href={downloadComplianceCSVUrl(historySearch, historyStatusFilter)}
-                  download="echotrust_compliance_audit.csv"
+                <button
+                  onClick={async () => {
+                    try {
+                      await downloadComplianceCSV();
+                    } catch (err) {
+                      setErrorBanner(`Compliance CSV export failed: ${err.message}`);
+                    }
+                  }}
                   className="px-3.5 py-2 text-xs font-semibold bg-white border border-slate-200 rounded-xl text-slate-700 hover:bg-slate-50 flex items-center space-x-1.5 shadow-2xs cursor-pointer"
                 >
                   <Download className="w-3.5 h-3.5 text-emerald-600" />
                   <span>Export Compliance CSV</span>
-                </a>
+                </button>
               </div>
 
               {/* Filter Toolbar */}
@@ -2901,7 +2961,17 @@ export default function App() {
     }
   });
 
-  // Verify and refresh session on load if token is stored
+  // Global 401 unauthorized listener + token verification on load
+  useEffect(() => {
+    const onUnauthorized = () => {
+      setToken('');
+      setUser(null);
+      setCurrentView('login');
+    };
+    window.addEventListener('echotrust:unauthorized', onUnauthorized);
+    return () => window.removeEventListener('echotrust:unauthorized', onUnauthorized);
+  }, []);
+
   useEffect(() => {
     if (token) {
       fetchCurrentUser(token)
@@ -2911,7 +2981,6 @@ export default function App() {
           }
         })
         .catch(() => {
-          // Token invalid or expired
           localStorage.removeItem('echotrust_token');
           localStorage.removeItem('echotrust_user');
           sessionStorage.removeItem('echotrust_token');

@@ -15,6 +15,11 @@ env
 *.aac
 generated-audio.wav
 
+# Logs
+logs/
+backend/logs/
+*.log
+
 # Python
 __pycache__/
 *.py[cod]

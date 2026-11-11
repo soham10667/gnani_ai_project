@@ -1,8 +1,11 @@
 import json
 import sqlite3
+import threading
+import uuid
 from typing import List, Dict, Any, Optional
 from datetime import datetime
 from backend.config import settings
+from backend.logger import logger
 
 try:
     from supabase import create_client, Client
@@ -10,31 +13,67 @@ try:
 except ImportError:
     HAS_SUPABASE_LIB = False
 
+
 class DatabaseManager:
-    def __init__(self):
+    ALLOWED_SESSION_COLUMNS = {
+        "customer_id", "app_no", "channel", "status", "entity_count",
+        "initial_conf", "final_conf", "corrections", "duration_secs",
+        "officer_id", "dialogue_log", "verification_summary", "active_target_id"
+    }
+    ALLOWED_ENTITY_COLUMNS = {
+        "value", "confidence", "status", "validation_status",
+        "validation_message", "phonetic_summary", "phonetic_details",
+        "history", "verified_at"
+    }
+
+    def __init__(self, db_path: Optional[str] = None):
+        self.db_path = db_path or settings.SQLITE_DB_PATH
+        self._write_lock = threading.Lock()
         self.use_supabase = False
         self.supabase: Optional[Any] = None
-        
+
         if HAS_SUPABASE_LIB and settings.SUPABASE_URL and settings.SUPABASE_KEY:
             try:
                 self.supabase = create_client(settings.SUPABASE_URL, settings.SUPABASE_KEY)
                 self.use_supabase = True
-                print("Connected to Supabase PostgreSQL Database.")
+                logger.info("[DB] Connected to Supabase PostgreSQL Database.")
             except Exception as e:
-                print(f"Supabase connection error: {e}. Falling back to SQLite.")
+                logger.warning(f"[DB] Supabase connection error: {e}. Falling back to SQLite.")
                 self.use_supabase = False
-        
-        # Always initialize SQLite database as resilient storage / fallback
+
         self._init_sqlite()
         self._seed_initial_data()
 
     def _get_sqlite_conn(self):
-        conn = sqlite3.connect(settings.SQLITE_DB_PATH)
+        conn = sqlite3.connect(self.db_path, timeout=15.0, check_same_thread=False)
         conn.row_factory = sqlite3.Row
         return conn
 
+    def check_health(self) -> Dict[str, Any]:
+        try:
+            with self._get_sqlite_conn() as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT 1")
+                cursor.fetchone()
+                cursor.execute("SELECT COUNT(*) FROM verification_sessions")
+                sess_count = cursor.fetchone()[0]
+            return {
+                "connected": True,
+                "engine": "Supabase + SQLite" if self.use_supabase else "SQLite Local",
+                "status": "Connected",
+                "total_sessions": sess_count,
+            }
+        except Exception as e:
+            logger.error(f"[DB] Health check failed: {e}")
+            return {
+                "connected": False,
+                "engine": "SQLite",
+                "status": "Error",
+                "error": str(e),
+            }
+
     def _init_sqlite(self):
-        with self._get_sqlite_conn() as conn:
+        with self._write_lock, self._get_sqlite_conn() as conn:
             cursor = conn.cursor()
             cursor.executescript("""
             CREATE TABLE IF NOT EXISTS users (
@@ -69,6 +108,8 @@ class DatabaseManager:
                 duration_secs INT,
                 officer_id TEXT,
                 dialogue_log TEXT,
+                verification_summary TEXT,
+                active_target_id TEXT,
                 created_at TEXT,
                 updated_at TEXT
             );
@@ -117,90 +158,98 @@ class DatabaseManager:
             );
             """)
 
-            # Migration: Ensure password_hash column exists in users table
+            # Safe schema migrations on existing databases
             cursor.execute("PRAGMA table_info(users)")
-            columns = [row[1] for row in cursor.fetchall()]
-            if "password_hash" not in columns:
-                try:
-                    cursor.execute("ALTER TABLE users ADD COLUMN password_hash TEXT")
-                except Exception as e:
-                    print(f"Error altering users table: {e}")
+            user_cols = [row[1] for row in cursor.fetchall()]
+            if "password_hash" not in user_cols:
+                cursor.execute("ALTER TABLE users ADD COLUMN password_hash TEXT")
 
-            # Ensure default demo user has valid password hash
+            cursor.execute("PRAGMA table_info(verification_sessions)")
+            sess_cols = [row[1] for row in cursor.fetchall()]
+            if "verification_summary" not in sess_cols:
+                cursor.execute("ALTER TABLE verification_sessions ADD COLUMN verification_summary TEXT")
+            if "active_target_id" not in sess_cols:
+                cursor.execute("ALTER TABLE verification_sessions ADD COLUMN active_target_id TEXT")
+
             demo_hash = "$2b$12$/fsqcwJxBPZRVdfZbt28t.8V7WncdoqCq532WW1.ajWfBhZQ0fSt6"
-            cursor.execute("UPDATE users SET password_hash = ? WHERE email = 'ananya.k@apexbank.in' AND (password_hash IS NULL OR password_hash = '')", (demo_hash,))
-
+            cursor.execute(
+                "UPDATE users SET password_hash = ? WHERE email = 'ananya.k@apexbank.in' AND (password_hash IS NULL OR password_hash = '')",
+                (demo_hash,),
+            )
             conn.commit()
 
     def _seed_initial_data(self):
-        with self._get_sqlite_conn() as conn:
+        with self._write_lock, self._get_sqlite_conn() as conn:
             cursor = conn.cursor()
+            cursor.execute("SELECT COUNT(*) FROM users WHERE email = 'ananya.k@apexbank.in'")
+            if cursor.fetchone()[0] == 0:
+                now_str = datetime.now().isoformat()
+                demo_hash = "$2b$12$/fsqcwJxBPZRVdfZbt28t.8V7WncdoqCq532WW1.ajWfBhZQ0fSt6"
+                cursor.execute(
+                    "INSERT INTO users (id, name, email, password_hash, role, organization, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    ("USR-1", "Ananya Kapoor", "ananya.k@apexbank.in", demo_hash, "Senior Verification Officer", "Apex Bank BFSI", now_str),
+                )
+
             cursor.execute("SELECT COUNT(*) FROM verification_sessions")
             if cursor.fetchone()[0] == 0:
                 now_str = datetime.now().isoformat()
-                
-                # Seed User
-                cursor.execute(
-                    "INSERT INTO users VALUES (?, ?, ?, ?, ?, ?)",
-                    ("USR-1", "Ananya Kapoor", "ananya.k@apexbank.in", "Senior Verification Officer", "Apex Bank BFSI", now_str)
-                )
-                
-                # Seed Customers
                 customers_data = [
                     ("CUST-8021", "Rahul Sharma", "9876543210", "rahul.s@example.com", "LOAN-2025-881", now_str),
                     ("CUST-7944", "Priya Narang", "9811223344", "priya.n@example.com", "INS-HLT-904", now_str),
                     ("CUST-7210", "Amitabh Sen", "9722334455", "amitabh.sen@example.com", "CC-PREM-412", now_str),
                     ("CUST-6891", "Sneha Kulkarni", "9633445566", "sneha.k@example.com", "MORTG-7721", now_str),
-                    ("CUST-6502", "David George", "9544556677", "david.g@example.com", "SAV-ACC-119", now_str),
                 ]
-                cursor.executemany("INSERT INTO customers VALUES (?, ?, ?, ?, ?, ?)", customers_data)
-                
-                # Seed Sessions
+                cursor.executemany(
+                    "INSERT OR IGNORE INTO customers VALUES (?, ?, ?, ?, ?, ?)", customers_data
+                )
+
                 sessions_data = [
-                    ("SES-94812", "CUST-8021", "LOAN-2025-881", "Inbound IVR", "In Progress", 6, 82.0, 96.0, 1, 132, "USR-1", json.dumps([]), now_str, now_str),
-                    ("SES-94811", "CUST-7944", "INS-HLT-904", "Agent Voice Stream", "Verified", 5, 94.0, 99.0, 0, 95, "USR-1", json.dumps([]), now_str, now_str),
-                    ("SES-94808", "CUST-7210", "CC-PREM-412", "Inbound IVR", "Verified", 6, 69.0, 95.0, 3, 210, "USR-1", json.dumps([]), now_str, now_str),
-                    ("SES-94799", "CUST-6891", "MORTG-7721", "Web RTC", "Rejected", 6, 58.0, 64.0, 2, 140, "USR-1", json.dumps([]), now_str, now_str),
-                    ("SES-94782", "CUST-6502", "SAV-ACC-119", "Inbound IVR", "Verified", 4, 91.0, 98.0, 0, 78, "USR-1", json.dumps([]), now_str, now_str),
+                    ("SES-94811", "CUST-7944", "INS-HLT-904", "Agent Voice Stream", "Verified", 6, 94.0, 99.0, 0, 95, "USR-1", json.dumps([]), "All KYC details verified.", None, now_str, now_str),
+                    ("SES-94808", "CUST-7210", "CC-PREM-412", "Inbound IVR", "Verified", 6, 72.0, 95.0, 2, 180, "USR-1", json.dumps([]), "Verified after phonetic correction loop.", None, now_str, now_str),
+                    ("SES-94799", "CUST-6891", "MORTG-7721", "Web RTC", "Rejected", 6, 58.0, 62.0, 2, 140, "USR-1", json.dumps([]), "Flagged due to identity mismatch.", None, now_str, now_str),
                 ]
-                cursor.executemany("INSERT INTO verification_sessions VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", sessions_data)
+                cursor.executemany(
+                    """
+                    INSERT OR IGNORE INTO verification_sessions
+                    (id, customer_id, app_no, channel, status, entity_count, initial_conf, final_conf, corrections, duration_secs, officer_id, dialogue_log, verification_summary, active_target_id, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    sessions_data,
+                )
 
-                # Seed Entities for SES-94812 (Rahul Sharma)
-                entities_data = [
-                    ("ent_name_1", "SES-94812", "name", "Full Name", "Rahul Sharma", 98.0, "verified", "valid", "Valid BFSI name", "R-Romeo, A-Alpha, H-Hotel, U-Uniform, L-Lima ...", json.dumps([]), json.dumps(["Rahul Sharma"]), "10:42 AM", now_str),
-                    ("ent_phone_1", "SES-94812", "phone", "Phone Number", "9876543210", 92.0, "verified", "valid", "10-digit Indian mobile verified", "9-8-7-6-5-4-3-2-1-0 (Individual Digits)", json.dumps([]), json.dumps(["9876543210"]), "10:43 AM", now_str),
-                    ("ent_address_1", "SES-94812", "address", "Residential Address", "24 MG Road, Pune, 411001", 76.0, "pending", "valid", "Recognized street and PIN 411001", "Flat 24, M-G Road, Pune, Pin 4-1-1-0-0-1", json.dumps([]), json.dumps(["24 MG Road, Pune, 411001"]), None, now_str),
-                    ("ent_account_1", "SES-94812", "account", "Account Number", "123456789012", 65.0, "flagged", "valid", "12-digit standard savings format", "1-2-3-4-5-6-7-8-9-0-1-2", json.dumps([]), json.dumps(["123456789012"]), None, now_str),
-                    ("ent_dob_1", "SES-94812", "dob", "Date of Birth", "15/08/2002", 99.0, "verified", "valid", "Age 23 - meets KYC adulthood requirement", "15th August, Year Two Thousand Two", json.dumps([]), json.dumps(["15/08/2002"]), "10:41 AM", now_str),
-                    ("ent_id_1", "SES-94812", "id_doc", "National ID / PAN", "ABCDE1234F", 84.0, "pending", "valid", "Format matches Indian Income Tax PAN", "A-Alpha, B-Bravo, C-Charlie, D-Delta, E-Echo ...", json.dumps([]), json.dumps(["ABCDE1234F"]), None, now_str),
+                # Seed entities matching those 3 historical sessions accurately
+                hist_entities = [
+                    ("SES-94811__name", "SES-94811", "name", "Full Name", "Priya Narang", 99.0, "verified", "valid", "Valid BFSI name", "P-Papa, R-Romeo...", "[]", '["Priya Narang"]', "09:30 AM", now_str),
+                    ("SES-94811__phone", "SES-94811", "phone", "Phone Number", "9811223344", 98.0, "verified", "valid", "Valid 10-digit Indian mobile", "9-8-1-1-2-2-3-3-4-4", "[]", '["9811223344"]', "09:31 AM", now_str),
+                    ("SES-94808__name", "SES-94808", "name", "Full Name", "Amitabh Sen", 95.0, "verified", "valid", "Confirmed after correction", "A-Alpha, M-Mike...", "[]", '["Amithab Sen", "Amitabh Sen"]', "04:15 PM", now_str),
+                    ("SES-94799__address", "SES-94799", "address", "Residential Address", "14 MG Road, Pune", 62.0, "flagged", "warning", "Unconfirmed low confidence", "14 MG Road", "[]", '["14 MG Road"]', None, now_str),
                 ]
-                cursor.executemany("INSERT INTO extracted_entities VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", entities_data)
+                cursor.executemany("INSERT OR IGNORE INTO extracted_entities VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", hist_entities)
 
-                # Seed sample correction logs for ML model initialization
                 correction_seeds = [
-                    ("SES-94808", "ent_name_2", "name", "Amithab Sen", "Amitabh Sen", 72.0, 95.0, 1, 1, "th:t"),
-                    ("SES-94808", "ent_id_2", "id_doc", "ABODE1234F", "ABCDE1234F", 64.0, 94.0, 2, 1, "O:C"),
-                    ("SES-94808", "ent_phone_2", "phone", "9722334450", "9722334455", 81.0, 96.0, 1, 1, "0:5"),
-                    ("SES-94799", "ent_address_3", "address", "14 MG Road", "24 MG Road", 58.0, 64.0, 1, 1, "14:24"),
+                    ("SES-94808", "SES-94808__name", "name", "Amithab Sen", "Amitabh Sen", 72.0, 95.0, 1, 1, "th->t", now_str),
+                    ("SES-94808", "SES-94808__id_doc", "id_doc", "ABODE1234F", "ABCDE1234F", 64.0, 94.0, 2, 1, "O->C", now_str),
+                    ("SES-94808", "SES-94808__phone", "phone", "9722334450", "9722334455", 81.0, 96.0, 1, 1, "0->5", now_str),
+                    ("SES-94799", "SES-94799__address", "address", "14 MG Road", "24 MG Road", 58.0, 64.0, 1, 1, "14->24", now_str),
                 ]
                 cursor.executemany(
                     "INSERT INTO correction_logs (session_id, entity_id, entity_type, original_value, corrected_value, original_conf, corrected_conf, attempts, character_distance, phonetic_mismatch_pair, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                    [(s[0], s[1], s[2], s[3], s[4], s[5], s[6], s[7], s[8], s[9], now_str) for s in correction_seeds]
+                    correction_seeds,
                 )
 
-                conn.commit()
+            conn.commit()
 
     # --- SESSIONS CRUD ---
     def get_sessions(self, search: str = "", status: str = "", channel: str = "", limit: int = 50) -> List[Dict[str, Any]]:
         with self._get_sqlite_conn() as conn:
             cursor = conn.cursor()
             query = """
-                SELECT s.*, c.name as customer_name, c.id as customer_code
+                SELECT s.*, COALESCE(c.name, 'Pending Identification') as customer_name, COALESCE(c.id, s.customer_id) as customer_code
                 FROM verification_sessions s
                 LEFT JOIN customers c ON s.customer_id = c.id
                 WHERE 1=1
             """
-            params = []
+            params: List[Any] = []
             if search:
                 query += " AND (s.id LIKE ? OR s.app_no LIKE ? OR c.name LIKE ? OR c.id LIKE ?)"
                 like_term = f"%{search}%"
@@ -211,19 +260,29 @@ class DatabaseManager:
             if channel and channel != "All Channels":
                 query += " AND s.channel = ?"
                 params.append(channel)
-                
+
             query += " ORDER BY s.created_at DESC LIMIT ?"
             params.append(limit)
-            
+
             cursor.execute(query, params)
-            rows = cursor.fetchall()
-            return [dict(row) for row in rows]
+            rows = []
+            for row in cursor.fetchall():
+                d = dict(row)
+                if d.get("dialogue_log"):
+                    try:
+                        d["dialogue_log"] = json.loads(d["dialogue_log"])
+                    except Exception:
+                        d["dialogue_log"] = []
+                else:
+                    d["dialogue_log"] = []
+                rows.append(d)
+            return rows
 
     def get_session_by_id(self, session_id: str) -> Optional[Dict[str, Any]]:
         with self._get_sqlite_conn() as conn:
             cursor = conn.cursor()
             cursor.execute("""
-                SELECT s.*, c.name as customer_name, c.id as customer_code, c.phone as customer_phone
+                SELECT s.*, c.name as customer_name, c.id as customer_code, c.phone as customer_phone, c.email as customer_email
                 FROM verification_sessions s
                 LEFT JOIN customers c ON s.customer_id = c.id
                 WHERE s.id = ?
@@ -231,66 +290,90 @@ class DatabaseManager:
             session_row = cursor.fetchone()
             if not session_row:
                 return None
-            
+
             session_dict = dict(session_row)
             if session_dict.get("dialogue_log"):
                 try:
                     session_dict["dialogue_log"] = json.loads(session_dict["dialogue_log"])
                 except Exception:
                     session_dict["dialogue_log"] = []
-                    
-            # Get Entities
-            cursor.execute("SELECT * FROM extracted_entities WHERE session_id = ?", (session_id,))
-            entities_rows = cursor.fetchall()
+            else:
+                session_dict["dialogue_log"] = []
+
+            cursor.execute("SELECT * FROM extracted_entities WHERE session_id = ? ORDER BY created_at ASC", (session_id,))
             entities = []
-            for er in entities_rows:
+            for er in cursor.fetchall():
                 ed = dict(er)
-                if ed.get("phonetic_details"):
-                    try:
-                        ed["phonetic_details"] = json.loads(ed["phonetic_details"])
-                    except Exception:
-                        ed["phonetic_details"] = []
-                if ed.get("history"):
-                    try:
-                        ed["history"] = json.loads(ed["history"])
-                    except Exception:
-                        ed["history"] = []
+                for jf in ("phonetic_details", "history"):
+                    if ed.get(jf):
+                        try:
+                            ed[jf] = json.loads(ed[jf])
+                        except Exception:
+                            ed[jf] = []
+                    else:
+                        ed[jf] = []
                 entities.append(ed)
             session_dict["entities"] = entities
             return session_dict
 
     def create_session(self, session_data: Dict[str, Any]) -> Dict[str, Any]:
-        with self._get_sqlite_conn() as conn:
+        with self._write_lock, self._get_sqlite_conn() as conn:
             cursor = conn.cursor()
             now_str = datetime.now().isoformat()
-            sid = session_data.get("id") or f"SES-{int(datetime.now().timestamp()) % 100000}"
+            sid = session_data.get("id") or f"SES-{uuid.uuid4().hex[:5].upper()}"
+            cid = session_data.get("customer_id") or f"CUST-{uuid.uuid4().hex[:4].upper()}"
+            cname = (session_data.get("customer_name") or "").strip() or "New Applicant"
+            app_no = session_data.get("app_no") or f"KYC-{datetime.now().year}-{sid[-4:]}"
+
+            cursor.execute("SELECT id FROM customers WHERE id = ?", (cid,))
+            if not cursor.fetchone():
+                cursor.execute(
+                    "INSERT INTO customers (id, name, phone, email, application_no, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                    (cid, cname, "", "", app_no, now_str),
+                )
+
             cursor.execute("""
-                INSERT INTO verification_sessions (id, customer_id, app_no, channel, status, entity_count, initial_conf, final_conf, corrections, duration_secs, dialogue_log, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO verification_sessions
+                (id, customer_id, app_no, channel, status, entity_count, initial_conf, final_conf, corrections, duration_secs, officer_id, dialogue_log, verification_summary, active_target_id, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 sid,
-                session_data.get("customer_id", "CUST-8021"),
-                session_data.get("app_no", f"LOAN-{datetime.now().year}-{sid[-4:]}"),
-                session_data.get("channel", "Inbound IVR"),
+                cid,
+                app_no,
+                session_data.get("channel", "Voice AI Agent"),
                 session_data.get("status", "In Progress"),
-                session_data.get("entity_count", 6),
-                session_data.get("initial_conf", 80.0),
-                session_data.get("final_conf", 80.0),
+                session_data.get("entity_count", 8),
+                float(session_data.get("initial_conf", 0.0)),
+                float(session_data.get("final_conf", 0.0)),
                 0,
                 0,
+                session_data.get("officer_id", "USR-1"),
                 json.dumps(session_data.get("dialogue_log", [])),
+                "Session initialized. Awaiting verified customer entities.",
+                session_data.get("active_target_id"),
                 now_str,
-                now_str
+                now_str,
             ))
             conn.commit()
-            return self.get_session_by_id(sid)
+        return self.get_session_by_id(sid)
+
+    def ensure_session_exists(self, session_id: Optional[str], officer_id: Optional[str] = None) -> Dict[str, Any]:
+        if session_id:
+            existing = self.get_session_by_id(session_id)
+            if existing:
+                return existing
+        return self.create_session({"id": session_id, "officer_id": officer_id or "USR-1"})
 
     def update_session(self, session_id: str, updates: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-        with self._get_sqlite_conn() as conn:
+        safe_updates = {k: v for k, v in updates.items() if k in self.ALLOWED_SESSION_COLUMNS}
+        if not safe_updates:
+            return self.get_session_by_id(session_id)
+
+        with self._write_lock, self._get_sqlite_conn() as conn:
             cursor = conn.cursor()
             set_clauses = []
             params = []
-            for k, v in updates.items():
+            for k, v in safe_updates.items():
                 if k == "dialogue_log" and isinstance(v, (list, dict)):
                     v = json.dumps(v)
                 set_clauses.append(f"{k} = ?")
@@ -298,18 +381,38 @@ class DatabaseManager:
             set_clauses.append("updated_at = ?")
             params.append(datetime.now().isoformat())
             params.append(session_id)
-            
+
             cursor.execute(f"UPDATE verification_sessions SET {', '.join(set_clauses)} WHERE id = ?", params)
             conn.commit()
-            return self.get_session_by_id(session_id)
+        return self.get_session_by_id(session_id)
+
+    def append_dialogue_messages(self, session_id: str, messages: List[Dict[str, Any]]):
+        session = self.get_session_by_id(session_id)
+        if not session:
+            return
+        log = list(session.get("dialogue_log") or [])
+        for msg in messages:
+            entry = dict(msg)
+            entry.setdefault("timestamp", datetime.now().isoformat())
+            log.append(entry)
+        self.update_session(session_id, {"dialogue_log": log})
 
     # --- ENTITIES CRUD ---
+    def _resolve_db_entity_id(self, session_id: str, entity_id_or_type: str) -> str:
+        if entity_id_or_type.startswith(f"{session_id}__") or entity_id_or_type.startswith("ent_"):
+            return entity_id_or_type
+        return f"{session_id}__{entity_id_or_type}"
+
     def update_entity(self, entity_id: str, updates: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-        with self._get_sqlite_conn() as conn:
+        safe_updates = {k: v for k, v in updates.items() if k in self.ALLOWED_ENTITY_COLUMNS}
+        if not safe_updates:
+            return None
+
+        with self._write_lock, self._get_sqlite_conn() as conn:
             cursor = conn.cursor()
             set_clauses = []
             params = []
-            for k, v in updates.items():
+            for k, v in safe_updates.items():
                 if k in ("phonetic_details", "history") and isinstance(v, (list, dict)):
                     v = json.dumps(v)
                 set_clauses.append(f"{k} = ?")
@@ -317,114 +420,174 @@ class DatabaseManager:
             params.append(entity_id)
             cursor.execute(f"UPDATE extracted_entities SET {', '.join(set_clauses)} WHERE id = ?", params)
             conn.commit()
-            
             cursor.execute("SELECT * FROM extracted_entities WHERE id = ?", (entity_id,))
             row = cursor.fetchone()
             return dict(row) if row else None
 
     def upsert_entities(self, session_id: str, entities: List[Dict[str, Any]]):
-        with self._get_sqlite_conn() as conn:
+        """
+        Stores or updates extracted entities for a session.
+        Strict Compliance Rule: NEVER marks newly extracted or unconfirmed data as 'verified'.
+        """
+        with self._write_lock, self._get_sqlite_conn() as conn:
             cursor = conn.cursor()
             now_str = datetime.now().isoformat()
+
             for ent in entities:
-                eid = ent.get("id") or f"ent_{ent.get('entity_type', 'gen')}_{int(datetime.now().timestamp()) % 10000}"
-                history = json.dumps(ent.get("history", [ent.get("value", "")]))
-                phonetic_details = json.dumps(ent.get("phonetic_details", []))
-                
+                etype = ent.get("entity_type") or ent.get("id") or "alpha"
+                db_eid = self._resolve_db_entity_id(session_id, etype)
+
+                # Never persist 'verified' through generic extraction/upsert
+                raw_status = ent.get("status", "pending")
+                safe_status = "pending" if raw_status == "verified" else raw_status
+
+                cursor.execute("SELECT history, status FROM extracted_entities WHERE id = ?", (db_eid,))
+                existing = cursor.fetchone()
+                hist_list = []
+                if existing and existing["history"]:
+                    try:
+                        hist_list = json.loads(existing["history"])
+                    except Exception:
+                        hist_list = []
+                val = str(ent.get("value", ""))
+                same_as_verified = bool(
+                    existing and existing["status"] == "verified" and hist_list and hist_list[-1] == val
+                )
+                if val and (not hist_list or hist_list[-1] != val):
+                    hist_list.append(val)
+
+                # Only keep 'verified' if this exact same value was ALREADY confirmed; never mark new/changed values verified automatically!
+                if same_as_verified:
+                    safe_status = "verified"
+
+                phonetic_details = json.dumps(ent.get("phoneticDetails") or ent.get("phonetic_details") or [])
+
                 cursor.execute("""
-                    INSERT INTO extracted_entities (id, session_id, entity_type, label, value, confidence, status, validation_status, validation_message, phonetic_summary, phonetic_details, history, verified_at, created_at)
+                    INSERT INTO extracted_entities
+                    (id, session_id, entity_type, label, value, confidence, status, validation_status, validation_message, phonetic_summary, phonetic_details, history, verified_at, created_at)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(id) DO UPDATE SET
                         value = excluded.value,
                         confidence = excluded.confidence,
-                        status = excluded.status,
+                        status = ?,
                         validation_status = excluded.validation_status,
                         validation_message = excluded.validation_message,
                         phonetic_summary = excluded.phonetic_summary,
                         phonetic_details = excluded.phonetic_details,
                         history = excluded.history,
-                        verified_at = excluded.verified_at
+                        verified_at = CASE WHEN ? = 'verified' THEN verified_at ELSE NULL END
                 """, (
-                    eid,
+                    db_eid,
                     session_id,
-                    ent.get("entity_type", "alpha"),
-                    ent.get("label", "Entity"),
-                    ent.get("value", ""),
-                    ent.get("confidence", 80.0),
-                    ent.get("status", "pending"),
-                    ent.get("validation_status", "valid"),
-                    ent.get("validation_message", ""),
-                    ent.get("phonetic_summary", ""),
+                    etype,
+                    ent.get("label", etype.title()),
+                    val,
+                    float(ent.get("confidence", 80.0)),
+                    safe_status,
+                    ent.get("validationStatus") or ent.get("validation_status") or "valid",
+                    ent.get("validationMessage") or ent.get("validation_message") or "",
+                    ent.get("phoneticSummary") or ent.get("phonetic_summary") or "",
                     phonetic_details,
-                    history,
-                    ent.get("verified_at"),
-                    now_str
+                    json.dumps(hist_list),
+                    None,
+                    now_str,
+                    safe_status,
+                    safe_status,
                 ))
+
+            # Update session initial_conf/final_conf average
+            cursor.execute("SELECT AVG(confidence) FROM extracted_entities WHERE session_id = ?", (session_id,))
+            avg_conf = cursor.fetchone()[0]
+            if avg_conf is not None:
+                cursor.execute(
+                    """
+                    UPDATE verification_sessions
+                    SET initial_conf = CASE WHEN initial_conf <= 0 THEN ? ELSE initial_conf END,
+                        final_conf = ?,
+                        updated_at = ?
+                    WHERE id = ?
+                    """,
+                    (round(avg_conf, 1), round(avg_conf, 1), now_str, session_id),
+                )
+
             conn.commit()
 
     # --- CONFIRMATIONS & CORRECTIONS LOGGING ---
     def record_confirmation(self, session_id: str, entity_id: str, entity_type: str, confirmed_value: str, confidence: float):
-        with self._get_sqlite_conn() as conn:
+        db_eid = self._resolve_db_entity_id(session_id, entity_type or entity_id)
+        with self._write_lock, self._get_sqlite_conn() as conn:
             cursor = conn.cursor()
             now_str = datetime.now().isoformat()
+            time_now = datetime.now().strftime("%I:%M %p")
+
             cursor.execute("""
                 INSERT INTO entity_confirmations (session_id, entity_id, entity_type, confirmed_value, customer_affirmed, confidence, confirmed_at)
                 VALUES (?, ?, ?, ?, 1, ?, ?)
-            """, (session_id, entity_id, entity_type, confirmed_value, confidence, now_str))
-            
-            # Update entity status in extracted_entities
-            time_now = datetime.now().strftime("%I:%M %p")
+            """, (session_id, db_eid, entity_type, confirmed_value, float(confidence), now_str))
+
             cursor.execute("""
                 UPDATE extracted_entities
-                SET status = 'verified', confidence = MAX(confidence, 96.0), verified_at = ?
+                SET status = 'verified', value = ?, confidence = MAX(confidence, ?), verified_at = ?
                 WHERE id = ?
-            """, (time_now, entity_id))
-            
-            # Update verification_sessions final_conf
-            cursor.execute("""
-                UPDATE verification_sessions
-                SET final_conf = (
-                    SELECT AVG(confidence) FROM extracted_entities WHERE session_id = ?
-                ),
-                updated_at = ?
-                WHERE id = ?
-            """, (session_id, now_str, session_id))
+            """, (confirmed_value, max(float(confidence), 95.0), time_now, db_eid))
+
+            # If customer confirmed full name / phone / email, sync confirmed customer metadata
+            cursor.execute("SELECT customer_id FROM verification_sessions WHERE id = ?", (session_id,))
+            srow = cursor.fetchone()
+            if srow and srow["customer_id"]:
+                cid = srow["customer_id"]
+                if entity_type == "name":
+                    cursor.execute("UPDATE customers SET name = ? WHERE id = ?", (confirmed_value, cid))
+                elif entity_type == "phone":
+                    cursor.execute("UPDATE customers SET phone = ? WHERE id = ?", (confirmed_value, cid))
+                elif entity_type == "email":
+                    cursor.execute("UPDATE customers SET email = ? WHERE id = ?", (confirmed_value, cid))
+
             conn.commit()
 
-    def record_correction(self, session_id: str, entity_id: str, entity_type: str, original_val: str, corrected_val: str, original_conf: float, corrected_conf: float):
-        with self._get_sqlite_conn() as conn:
+        # Recompute verification summary and session metrics
+        self.generate_verification_summary(session_id)
+
+    def record_correction(
+        self,
+        session_id: str,
+        entity_id: str,
+        entity_type: str,
+        original_val: str,
+        corrected_val: str,
+        original_conf: float,
+        corrected_conf: float,
+    ):
+        db_eid = self._resolve_db_entity_id(session_id, entity_type or entity_id)
+        with self._write_lock, self._get_sqlite_conn() as conn:
             cursor = conn.cursor()
             now_str = datetime.now().isoformat()
-            
-            # Simple Levenshtein distance
-            def lev_dist(s1, s2):
+
+            def lev_dist(s1: str, s2: str) -> int:
                 if len(s1) < len(s2):
                     return lev_dist(s2, s1)
                 if len(s2) == 0:
                     return len(s1)
-                previous_row = range(len(s2) + 1)
+                prev = range(len(s2) + 1)
                 for i, c1 in enumerate(s1):
-                    current_row = [i + 1]
+                    curr = [i + 1]
                     for j, c2 in enumerate(s2):
-                        insertions = previous_row[j + 1] + 1
-                        deletions = current_row[j] + 1
-                        substitutions = previous_row[j] + (c1 != c2)
-                        current_row.append(min(insertions, deletions, substitutions))
-                    previous_row = current_row
-                return previous_row[-1]
-            
-            dist = lev_dist(original_val, corrected_val)
-            mismatch_pair = f"{original_val[:8]}->{corrected_val[:8]}"
-            
+                        curr.append(min(prev[j + 1] + 1, curr[j] + 1, prev[j] + (c1 != c2)))
+                    prev = curr
+                return prev[-1]
+
+            dist = lev_dist(str(original_val), str(corrected_val))
+            mismatch_pair = f"{str(original_val)[:10]}->{str(corrected_val)[:10]}"
+
             cursor.execute("""
-                INSERT INTO correction_logs (session_id, entity_id, entity_type, original_value, corrected_value, original_conf, corrected_conf, attempts, character_distance, phonetic_mismatch_pair, created_at)
+                INSERT INTO correction_logs
+                (session_id, entity_id, entity_type, original_value, corrected_value, original_conf, corrected_conf, attempts, character_distance, phonetic_mismatch_pair, created_at)
                 VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)
-            """, (session_id, entity_id, entity_type, original_val, corrected_val, original_conf, corrected_conf, dist, mismatch_pair, now_str))
-            
-            # Increment session corrections counter
+            """, (session_id, db_eid, entity_type, str(original_val), str(corrected_val), float(original_conf), float(corrected_conf), dist, mismatch_pair, now_str))
+
             cursor.execute("""
                 UPDATE verification_sessions
-                SET corrections = corrections + 1, updated_at = ?
+                SET corrections = COALESCE(corrections, 0) + 1, updated_at = ?
                 WHERE id = ?
             """, (now_str, session_id))
             conn.commit()
@@ -435,47 +598,167 @@ class DatabaseManager:
             cursor.execute("SELECT * FROM correction_logs ORDER BY created_at DESC LIMIT ?", (limit,))
             return [dict(row) for row in cursor.fetchall()]
 
-    # --- AGGREGATED ANALYTICS ---
+    def generate_verification_summary(self, session_id: str) -> Dict[str, Any]:
+        session = self.get_session_by_id(session_id)
+        if not session:
+            return {}
+
+        entities = session.get("entities", [])
+        verified = [e for e in entities if e.get("status") == "verified"]
+        pending = [e for e in entities if e.get("status") != "verified"]
+
+        avg_conf = round(sum(float(e.get("confidence", 0.0)) for e in entities) / len(entities), 1) if entities else 0.0
+        verified_summary = ", ".join([f"{e['label']}: {e['value']}" for e in verified]) or "None yet"
+        pending_summary = ", ".join([e['label'] for e in pending]) or "None"
+
+        # Mark session Verified only when at least 1 entity verified and ALL captured entities in session are verified (and >=3 or all 8 if full flow)
+        new_status = session.get("status", "In Progress")
+        if verified and len(pending) == 0 and len(verified) >= 6:
+            new_status = "Verified"
+
+        summary_text = (
+            f"Confirmed ({len(verified)}): {verified_summary} | "
+            f"Pending ({len(pending)}): {pending_summary} | "
+            f"Avg Confidence: {avg_conf}% | Corrections: {session.get('corrections', 0)}"
+        )
+
+        self.update_session(
+            session_id,
+            {
+                "status": new_status,
+                "final_conf": avg_conf,
+                "verification_summary": summary_text,
+            },
+        )
+        return {
+            "session_id": session_id,
+            "status": new_status,
+            "verified_count": len(verified),
+            "pending_count": len(pending),
+            "average_confidence": avg_conf,
+            "summary_text": summary_text,
+        }
+
+    # --- REAL BACKEND AGGREGATED ANALYTICS ---
     def get_dashboard_stats(self) -> Dict[str, Any]:
         with self._get_sqlite_conn() as conn:
             cursor = conn.cursor()
-            
-            # Total Sessions
+
             cursor.execute("SELECT COUNT(*) FROM verification_sessions")
             total_sessions = cursor.fetchone()[0]
-            
-            # Verified Sessions
+
+            cursor.execute("SELECT COUNT(*) FROM verification_sessions WHERE status = 'In Progress'")
+            active_conversations = cursor.fetchone()[0]
+
             cursor.execute("SELECT COUNT(*) FROM verification_sessions WHERE status = 'Verified'")
-            verified_sessions = cursor.fetchone()[0]
-            
-            # Pending / In Progress
-            cursor.execute("SELECT COUNT(*) FROM verification_sessions WHERE status IN ('In Progress', 'Pending')")
-            pending_sessions = cursor.fetchone()[0]
-            
-            # Total Corrections
+            completed_verifications = cursor.fetchone()[0]
+
+            cursor.execute("SELECT COUNT(*) FROM extracted_entities WHERE status IN ('pending', 'flagged', 'corrected')")
+            pending_confirmations = cursor.fetchone()[0]
+
+            cursor.execute("SELECT COUNT(*) FROM verification_sessions WHERE status IN ('Rejected', 'Failed')")
+            failed_verifications = cursor.fetchone()[0]
+
             cursor.execute("SELECT COALESCE(SUM(corrections), 0) FROM verification_sessions")
             corrections_run = cursor.fetchone()[0]
-            
-            # Average accuracy rate
-            cursor.execute("SELECT COALESCE(AVG(final_conf), 96.5) FROM verification_sessions WHERE status = 'Verified'")
-            avg_accuracy = round(cursor.fetchone()[0], 1)
-            
-            # Recent sessions list
+
+            cursor.execute("SELECT COUNT(*) FROM extracted_entities")
+            total_entities = cursor.fetchone()[0]
+            cursor.execute("SELECT COUNT(*) FROM extracted_entities WHERE status = 'verified'")
+            verified_entities = cursor.fetchone()[0]
+            entity_accuracy = round((verified_entities / total_entities) * 100.0, 1) if total_entities > 0 else 0.0
+
+            cursor.execute("SELECT AVG(confidence) FROM extracted_entities WHERE confidence > 0")
+            avg_conf_raw = cursor.fetchone()[0]
+            average_confidence = round(float(avg_conf_raw), 1) if avg_conf_raw is not None else 0.0
+
             cursor.execute("""
-                SELECT s.*, c.name as customer, c.id as customerId
+                SELECT s.*, COALESCE(c.name, 'Pending Identification') as customer, COALESCE(c.id, s.customer_id) as customerId
                 FROM verification_sessions s
                 LEFT JOIN customers c ON s.customer_id = c.id
-                ORDER BY s.created_at DESC LIMIT 6
+                ORDER BY s.updated_at DESC LIMIT 8
             """)
-            recent_sessions = [dict(row) for row in cursor.fetchall()]
-            
+            recent_sessions = []
+            recent_conversations = []
+            for row in cursor.fetchall():
+                sd = dict(row)
+                logs = []
+                if sd.get("dialogue_log"):
+                    try:
+                        logs = json.loads(sd["dialogue_log"])
+                    except Exception:
+                        logs = []
+                sd["dialogue_log"] = logs
+                recent_sessions.append(sd)
+
+                if logs:
+                    last_msg = logs[-1]
+                    recent_conversations.append({
+                        "session_id": sd["id"],
+                        "customer": sd["customer"],
+                        "status": sd["status"],
+                        "turns": len(logs),
+                        "last_sender": last_msg.get("sender", "ai"),
+                        "last_message": last_msg.get("text", ""),
+                        "timestamp": last_msg.get("timestamp") or sd.get("updated_at"),
+                        "confidence": sd.get("final_conf", 0.0),
+                    })
+
             return {
                 "total_sessions": total_sessions,
-                "verified_sessions": verified_sessions,
-                "pending_sessions": pending_sessions,
+                "active_conversations": active_conversations,
+                "completed_verifications": completed_verifications,
+                "verified_sessions": completed_verifications,
+                "pending_confirmations": pending_confirmations,
+                "pending_sessions": active_conversations,
+                "failed_verifications": failed_verifications,
+                "entity_accuracy": entity_accuracy,
+                "average_confidence": average_confidence,
+                "accuracy_rate": average_confidence,
                 "corrections_run": corrections_run,
-                "accuracy_rate": avg_accuracy,
-                "recent_sessions": recent_sessions
+                "total_entities": total_entities,
+                "verified_entities": verified_entities,
+                "recent_sessions": recent_sessions,
+                "recent_conversations": recent_conversations[:6],
+            }
+
+    def get_real_chart_metrics(self) -> Dict[str, Any]:
+        with self._get_sqlite_conn() as conn:
+            cursor = conn.cursor()
+            entity_types = [
+                ("name", "Full Name"),
+                ("phone", "Phone Number"),
+                ("email", "Email Address"),
+                ("address", "Address"),
+                ("amount", "Amount"),
+                ("dob", "DOB"),
+                ("account", "Bank Account"),
+                ("id_doc", "PAN / ID"),
+            ]
+            corrections_chart = []
+            for etype, label in entity_types:
+                cursor.execute("SELECT COUNT(*) FROM correction_logs WHERE entity_type = ?", (etype,))
+                corr_cnt = cursor.fetchone()[0]
+                cursor.execute("SELECT COUNT(*) FROM extracted_entities WHERE entity_type = ? AND status = 'verified'", (etype,))
+                conf_cnt = cursor.fetchone()[0]
+                corrections_chart.append({"entity": label, "corrections": corr_cnt, "autoConfirmed": conf_cnt})
+
+            brackets = [
+                ("Below 60%", "confidence < 60"),
+                ("60-70%", "confidence >= 60 AND confidence < 70"),
+                ("70-80%", "confidence >= 70 AND confidence < 80"),
+                ("80-90%", "confidence >= 80 AND confidence < 90"),
+                ("90-95%", "confidence >= 90 AND confidence < 95"),
+                ("95-100%", "confidence >= 95"),
+            ]
+            conf_dist = []
+            for label, cond in brackets:
+                cursor.execute(f"SELECT COUNT(*) FROM extracted_entities WHERE {cond}")
+                conf_dist.append({"bracket": label, "count": cursor.fetchone()[0]})
+
+            return {
+                "corrections_by_entity_chart": corrections_chart,
+                "confidence_distribution_chart": conf_dist,
             }
 
     # --- USER AUTHENTICATION CRUD ---
@@ -484,18 +767,14 @@ class DatabaseManager:
             cursor = conn.cursor()
             cursor.execute("SELECT * FROM users WHERE LOWER(email) = LOWER(?)", (email.strip(),))
             row = cursor.fetchone()
-            if row:
-                return dict(row)
-            return None
+            return dict(row) if row else None
 
     def get_user_by_id(self, user_id: str) -> Optional[Dict[str, Any]]:
         with self._get_sqlite_conn() as conn:
             cursor = conn.cursor()
             cursor.execute("SELECT * FROM users WHERE id = ?", (user_id,))
             row = cursor.fetchone()
-            if row:
-                return dict(row)
-            return None
+            return dict(row) if row else None
 
     def create_user(
         self,
@@ -503,16 +782,15 @@ class DatabaseManager:
         email: str,
         password_hash: str,
         role: str = "Verification Officer",
-        organization: str = "Apex Bank BFSI"
+        organization: str = "Apex Bank BFSI",
     ) -> Dict[str, Any]:
-        import uuid
         user_id = f"USR-{uuid.uuid4().hex[:8].upper()}"
         now_str = datetime.now().isoformat()
-        with self._get_sqlite_conn() as conn:
+        with self._write_lock, self._get_sqlite_conn() as conn:
             cursor = conn.cursor()
             cursor.execute(
                 "INSERT INTO users (id, name, email, password_hash, role, organization, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (user_id, name.strip(), email.strip().lower(), password_hash, role, organization, now_str)
+                (user_id, name.strip(), email.strip().lower(), password_hash, role, organization, now_str),
             )
             conn.commit()
             return {
@@ -521,8 +799,8 @@ class DatabaseManager:
                 "email": email.strip().lower(),
                 "role": role,
                 "organization": organization,
-                "created_at": now_str
+                "created_at": now_str,
             }
 
-db = DatabaseManager()
 
+db = DatabaseManager()
