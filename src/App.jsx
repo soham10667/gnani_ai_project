@@ -35,6 +35,12 @@ import LandingPage from './components/LandingPage';
 import LoginPage from './components/LoginPage';
 import RegisterPage from './components/RegisterPage';
 import LiveVerification from './components/LiveVerification';
+import Sidebar from './components/Sidebar';
+import {
+  DEFAULT_AUTHENTICATED_PATH,
+  normalizePathname,
+  resolveDashboardRoute,
+} from './config/navigation';
 
 // --- PHONETIC ALPHABET DICTIONARY ---
 const NATO_PHONETIC = {
@@ -200,10 +206,12 @@ function EchoTrustLogo({ className = "w-6 h-6" }) {
   );
 }
 
-function EchoTrustDashboard({ user, onLogout }) {
-  // Navigation State - Defaults cleanly to Live Verification officer console
-  const [activeTab, setActiveTab] = useState('live'); // 'analytics', 'dashboard', 'live', 'entities', 'history', 'settings', 'audit_logs'
+function EchoTrustDashboard({ user, onLogout, currentPath = DEFAULT_AUTHENTICATED_PATH, onNavigate }) {
+  // Active tab follows URL route via centralized nav config (no local tab state)
+  const activeRoute = resolveDashboardRoute(currentPath);
+  const activeTab = activeRoute.item.id;
   const [liveCallStatus, setLiveCallStatus] = useState('Idle');
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   
   // Live Verification Session State (starts empty, populated only from real sessions)
@@ -511,7 +519,7 @@ function EchoTrustDashboard({ user, onLogout }) {
       setCustomerName(sess.customer === 'Pending Identification' ? '' : sess.customer);
       setCustomerId(sess.customerId);
       setAppNo(sess.appNo);
-      setActiveTab('live');
+      onNavigate?.('/live');
 
       const details = await fetchSessionDetails(sess.id);
       if (details) {
@@ -519,7 +527,7 @@ function EchoTrustDashboard({ user, onLogout }) {
       }
     } catch (err) {
       setErrorBanner(`Could not load session details: ${err.message}`);
-      setActiveTab('live');
+      onNavigate?.('/live');
     }
   };
 
@@ -1384,125 +1392,21 @@ function EchoTrustDashboard({ user, onLogout }) {
 
   const currentFocusedEntity = activeEntityIndex !== null ? entities[activeEntityIndex] : null;
   const hasActiveFocusedEntity = Boolean(currentFocusedEntity && currentFocusedEntity.value && currentFocusedEntity.value.trim().length > 0);
-
-  // Navigation Items matching Live Verification console:
-  const NAV_ITEMS = [
-    { id: 'live', label: 'Live Verification', icon: Mic, badge: liveCallStatus === 'Live' ? 'Live' : null },
-    { id: 'analytics', label: 'Analytics', icon: BarChart3 },
-    { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
-    { id: 'entities', label: 'Entity Analysis', icon: Layers },
-    { id: 'history', label: 'History', icon: History },
-    { id: 'settings', label: 'Settings', icon: Settings },
-    { id: 'audit_logs', label: 'Audit Logs', icon: FileText }
-  ];
+  const isCallActive = liveCallStatus === 'Live' && Boolean(currentSessionId);
 
   return (
     <div className="min-h-screen bg-[#F8FAF9] text-slate-800 flex font-sans antialiased">
-      {/* =========================================================
-          SECTION 1: FIXED CLEAN LIGHT SIDEBAR ON THE LEFT
-         ========================================================= */}
-      <aside className={`fixed inset-y-0 left-0 z-50 w-64 bg-white text-slate-800 flex flex-col justify-between border-r border-slate-200 shadow-sm transition-transform duration-300 ease-in-out ${
-        mobileMenuOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'
-      }`}>
-        <div className="flex-1 overflow-y-auto">
-          {/* EchoTrust Logo and Branding */}
-          <div className="p-5 border-b border-slate-100 flex items-center justify-between">
-            <div className="flex items-center space-x-3 cursor-pointer" onClick={() => { setActiveTab('analytics'); setMobileMenuOpen(false); }}>
-              <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-emerald-500 via-teal-600 to-green-600 flex items-center justify-center shadow-lg shadow-emerald-500/25 ring-1 ring-emerald-500/20">
-                <EchoTrustLogo className="w-6 h-6 text-white" />
-              </div>
-              <div>
-                <div className="flex items-center space-x-2">
-                  <span className="font-extrabold text-lg tracking-tight text-slate-900">EchoTrust</span>
-                  <span className="text-[10px] uppercase font-bold px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200">
-                    AI Voice
-                  </span>
-                </div>
-                <p className="text-[11px] text-slate-400 leading-tight">Every Voice. Verified with Trust.</p>
-              </div>
-            </div>
-
-            {/* Mobile close button */}
-            <button
-              onClick={() => setMobileMenuOpen(false)}
-              className="lg:hidden text-slate-400 hover:text-slate-600 p-1 rounded-lg"
-            >
-              <X className="w-5 h-5" />
-            </button>
-          </div>
-
-          {/* Navigation Links */}
-          <div className="px-3 py-4">
-            <div className="px-3 mb-2 text-[11px] font-bold uppercase tracking-wider text-slate-400">
-              Core Modules
-            </div>
-            <nav className="space-y-1">
-              {NAV_ITEMS.map((item) => {
-                const Icon = item.icon;
-                const isActive = activeTab === item.id;
-                return (
-                  <button
-                    key={item.id}
-                    onClick={() => {
-                      setActiveTab(item.id);
-                      setMobileMenuOpen(false);
-                    }}
-                    className={`w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl text-sm font-medium transition-all ${
-                      isActive
-                        ? 'bg-gradient-to-r from-emerald-600 via-teal-600 to-green-600 text-white font-bold shadow-md shadow-emerald-600/25'
-                        : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100/80 font-medium'
-                    }`}
-                  >
-                    <div className="flex items-center space-x-3">
-                      <Icon className={`w-4 h-4 ${isActive ? 'text-white' : 'text-slate-400'}`} />
-                      <span>{item.label}</span>
-                    </div>
-                    {item.badge && (
-                      <span className={`flex items-center space-x-1.5 text-[10px] font-semibold px-2 py-0.5 rounded-full ${
-                        isActive
-                          ? 'bg-white/20 text-white border border-white/30'
-                          : 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                      }`}>
-                        <span className={`w-1.5 h-1.5 rounded-full ${isActive ? 'bg-white' : 'bg-emerald-500'} animate-ping`}></span>
-                        <span>{item.badge}</span>
-                      </span>
-                    )}
-                  </button>
-                );
-              })}
-            </nav>
-          </div>
-        </div>
-
-        {/* Sidebar Pinned Footer: User Profile with Logout (no View Landing Page shortcut) */}
-        <div className="p-3 border-t border-slate-100 bg-slate-50/70 space-y-2 shrink-0">
-          {/* User Profile Card with Direct Logout Button */}
-          <div className="p-2.5 rounded-2xl bg-white border border-slate-200/90 shadow-2xs flex items-center justify-between gap-2">
-            <div className="flex items-center space-x-2.5 min-w-0">
-              <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-emerald-600 via-teal-600 to-green-600 text-white flex items-center justify-center font-bold text-xs ring-2 ring-emerald-500/20 shadow-xs shrink-0">
-                {user?.name ? user.name.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase() : 'AK'}
-              </div>
-              <div className="min-w-0">
-                <div className="text-xs font-bold text-slate-900 truncate leading-tight">
-                  {user?.name || 'Ananya Kapoor'}
-                </div>
-                <div className="text-[10px] text-slate-400 truncate font-medium">
-                  {user?.role || 'Senior Verification Officer'}
-                </div>
-              </div>
-            </div>
-
-            {/* Logout Button */}
-            <button
-              onClick={onLogout}
-              title="Sign Out"
-              className="p-2 text-rose-600 hover:text-rose-700 hover:bg-rose-50 rounded-xl transition cursor-pointer shrink-0 border border-transparent hover:border-rose-100"
-            >
-              <LogOut className="w-4 h-4" />
-            </button>
-          </div>
-        </div>
-      </aside>
+      <Sidebar
+        currentPath={activeRoute.path}
+        onNavigate={(path) => onNavigate?.(path)}
+        isCallActive={isCallActive}
+        user={user}
+        onLogout={onLogout}
+        isCollapsed={sidebarCollapsed}
+        onToggleCollapse={() => setSidebarCollapsed((prev) => !prev)}
+        mobileMenuOpen={mobileMenuOpen}
+        onCloseMobileMenu={() => setMobileMenuOpen(false)}
+      />
 
       {/* Backdrop for mobile sidebar */}
       {mobileMenuOpen && (
@@ -1515,7 +1419,7 @@ function EchoTrustDashboard({ user, onLogout }) {
       {/* =========================================================
           SECTION 2: MAIN DASHBOARD AREA (Light Blue Background)
          ========================================================= */}
-      <div className="lg:ml-64 flex-1 flex flex-col min-h-screen">
+      <div className={`${sidebarCollapsed ? 'ml-16 lg:ml-20' : 'ml-16 lg:ml-64'} flex-1 flex flex-col min-h-screen transition-[margin] duration-200`}>
         {/* Top Header Section */}
         <header className="sticky top-0 z-30 bg-white/95 backdrop-blur-sm border-b border-slate-200/90 shadow-2xs">
           <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3.5 flex items-center justify-between gap-4">
@@ -1791,7 +1695,7 @@ function EchoTrustDashboard({ user, onLogout }) {
                     <span>Refresh</span>
                   </button>
                   <button
-                    onClick={() => setActiveTab('live')}
+                    onClick={() => onNavigate?.('/live')}
                     className="flex items-center space-x-2 bg-gradient-to-r from-emerald-600 via-teal-600 to-green-600 hover:from-emerald-500 hover:to-green-500 text-white px-4 py-2 rounded-xl font-bold text-xs shadow-md shadow-emerald-600/20 transition cursor-pointer"
                   >
                     <Mic className="w-4 h-4" />
@@ -1918,7 +1822,7 @@ function EchoTrustDashboard({ user, onLogout }) {
                       <h3 className="font-bold text-slate-900 text-sm">Recent Verification Sessions</h3>
                       <p className="text-[11px] text-slate-500">Live feed of DB sessions and confirmations</p>
                     </div>
-                    <button onClick={() => setActiveTab('history')} className="text-emerald-700 hover:text-emerald-900 text-xs font-semibold flex items-center cursor-pointer">
+                    <button onClick={() => onNavigate?.('/history')} className="text-emerald-700 hover:text-emerald-900 text-xs font-semibold flex items-center cursor-pointer">
                       <span>View All</span>
                       <ChevronRight className="w-3.5 h-3.5 ml-1" />
                     </button>
@@ -2421,12 +2325,19 @@ function EchoTrustDashboard({ user, onLogout }) {
   );
 }
 
+const PUBLIC_VIEW_PATHS = {
+  landing: '/',
+  login: '/login',
+  register: '/register',
+  dashboard: DEFAULT_AUTHENTICATED_PATH,
+};
+
 // =========================================================
 // MAIN APP COMPONENT (Application Flow & Session Controller)
 // Landing Page → Login/Register → Authentication → Dashboard
 // =========================================================
 export default function App() {
-  const [currentView, setCurrentView] = useState('landing'); // Always start on Landing Page!
+  const [pathname, setPathname] = useState(() => normalizePathname(window.location.pathname));
   const [token, setToken] = useState(() => {
     return localStorage.getItem('echotrust_token') || sessionStorage.getItem('echotrust_token') || '';
   });
@@ -2439,12 +2350,37 @@ export default function App() {
     }
   });
 
+  const isAuthenticated = Boolean(user || token);
+
+  const navigateToPath = (targetPath, { replace = false } = {}) => {
+    const mapped = PUBLIC_VIEW_PATHS[targetPath] || targetPath || '/';
+    const normalized = normalizePathname(mapped);
+    const currentBrowserPath = normalizePathname(window.location.pathname);
+
+    if (currentBrowserPath !== normalized) {
+      if (replace) {
+        window.history.replaceState(null, '', normalized);
+      } else {
+        window.history.pushState(null, '', normalized);
+      }
+    }
+    setPathname(normalized);
+  };
+
+  useEffect(() => {
+    const onPopState = () => {
+      setPathname(normalizePathname(window.location.pathname));
+    };
+    window.addEventListener('popstate', onPopState);
+    return () => window.removeEventListener('popstate', onPopState);
+  }, []);
+
   // Global 401 unauthorized listener + token verification on load
   useEffect(() => {
     const onUnauthorized = () => {
       setToken('');
       setUser(null);
-      setCurrentView('login');
+      navigateToPath('/login', { replace: true });
     };
     window.addEventListener('echotrust:unauthorized', onUnauthorized);
     return () => window.removeEventListener('echotrust:unauthorized', onUnauthorized);
@@ -2469,13 +2405,44 @@ export default function App() {
     }
   }, [token]);
 
-  const handleNavigate = (view) => {
-    if (view === 'dashboard' && !user && !token) {
-      setCurrentView('login');
+  // Synchronize URL redirects:
+  // - Authenticated "/" or legacy aliases -> canonical route ("/dashboard", "/entity-analysis", "/audit-logs", etc.)
+  // - Authenticated "/login" or "/register" -> "/dashboard"
+  useEffect(() => {
+    if (!isAuthenticated) return;
+
+    if (pathname === '/login' || pathname === '/register') {
+      navigateToPath(DEFAULT_AUTHENTICATED_PATH, { replace: true });
+      return;
+    }
+
+    if (pathname !== '/landing') {
+      const resolved = resolveDashboardRoute(pathname);
+      if (resolved.redirected) {
+        navigateToPath(resolved.path, { replace: true });
+      }
+    }
+  }, [isAuthenticated, pathname]);
+
+  const handleNavigate = (target, options = {}) => {
+    const mapped = PUBLIC_VIEW_PATHS[target] || target || '/';
+    const normalized = normalizePathname(mapped);
+    const isPublic = normalized === '/' || normalized === '/landing' || normalized === '/login' || normalized === '/register';
+
+    if (!isPublic && !isAuthenticated) {
+      navigateToPath('/login', options);
       window.scrollTo({ top: 0, behavior: 'smooth' });
       return;
     }
-    setCurrentView(view);
+
+    if (isAuthenticated && (normalized === '/' || normalized === '/login' || normalized === '/register')) {
+      navigateToPath(DEFAULT_AUTHENTICATED_PATH, options);
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+      return;
+    }
+
+    const finalPath = isPublic ? normalized : resolveDashboardRoute(normalized).path;
+    navigateToPath(finalPath, options);
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
@@ -2485,7 +2452,7 @@ export default function App() {
     const storage = rememberMe ? localStorage : sessionStorage;
     storage.setItem('echotrust_token', newToken);
     storage.setItem('echotrust_user', JSON.stringify(newUser));
-    setCurrentView('dashboard');
+    navigateToPath(DEFAULT_AUTHENTICATED_PATH, { replace: true });
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
@@ -2496,52 +2463,65 @@ export default function App() {
     sessionStorage.removeItem('echotrust_user');
     setToken('');
     setUser(null);
-    setCurrentView('landing');
+    navigateToPath('/', { replace: true });
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
-  if (currentView === 'login') {
-    return (
-      <LoginPage 
-        onNavigate={handleNavigate} 
-        onLoginSuccess={handleLoginSuccess} 
-      />
-    );
-  }
-
-  if (currentView === 'register') {
-    return (
-      <RegisterPage 
-        onNavigate={handleNavigate} 
-        onLoginSuccess={handleLoginSuccess} 
-      />
-    );
-  }
-
-  if (currentView === 'dashboard') {
-    if (!user && !token) {
+  if (!isAuthenticated) {
+    if (pathname === '/login') {
       return (
-        <LoginPage 
-          onNavigate={handleNavigate} 
-          onLoginSuccess={handleLoginSuccess} 
+        <LoginPage
+          onNavigate={handleNavigate}
+          onLoginSuccess={handleLoginSuccess}
         />
       );
     }
+
+    if (pathname === '/register') {
+      return (
+        <RegisterPage
+          onNavigate={handleNavigate}
+          onLoginSuccess={handleLoginSuccess}
+        />
+      );
+    }
+
+    if (pathname === '/' || pathname === '/landing') {
+      return (
+        <LandingPage
+          onNavigate={handleNavigate}
+          user={user}
+          onLogout={handleLogout}
+        />
+      );
+    }
+
     return (
-      <EchoTrustDashboard 
-        user={user} 
-        onLogout={handleLogout} 
-        onGoHome={() => handleNavigate('landing')} 
+      <LoginPage
+        onNavigate={handleNavigate}
+        onLoginSuccess={handleLoginSuccess}
       />
     );
   }
 
-  // Default: Landing Page is always the first page visitors see!
+  if (pathname === '/landing') {
+    return (
+      <LandingPage
+        onNavigate={handleNavigate}
+        user={user}
+        onLogout={handleLogout}
+      />
+    );
+  }
+
+  const resolvedRoute = resolveDashboardRoute(pathname);
+
   return (
-    <LandingPage 
-      onNavigate={handleNavigate} 
-      user={user} 
-      onLogout={handleLogout} 
+    <EchoTrustDashboard
+      user={user}
+      onLogout={handleLogout}
+      currentPath={resolvedRoute.path}
+      onNavigate={handleNavigate}
     />
   );
 }
