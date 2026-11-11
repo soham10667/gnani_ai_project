@@ -1,18 +1,32 @@
-from fastapi import FastAPI, Request
+import asyncio
+from contextlib import asynccontextmanager
+from typing import Optional
+from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from backend.config import settings
 from backend.logger import logger
 from backend.database import db
 from backend.routers import sessions, voice, entities, analytics, auth
+from backend.routers.auth import get_user_from_token
 from backend.services.gnani_stt import gnani_stt
 from backend.services.tts_service import tts_service
 from backend.services.llm_service import llm_service
+from backend.services.conversation_agent import conversation_agent
+from backend.services.realtime import realtime_hub
+
+
+@asynccontextmanager
+async def lifespan(app_instance: FastAPI):
+    realtime_hub.set_event_loop(asyncio.get_running_loop())
+    yield
+
 
 app = FastAPI(
     title=settings.PROJECT_NAME,
     version=settings.VERSION,
     description="Automated BFSI Voice Entity Verification Platform powered by Official Gnani AI STT/TTS and Stateful Conversation Management.",
+    lifespan=lifespan,
 )
 
 app.add_middleware(
@@ -69,3 +83,45 @@ def health_check():
         "tts": tts_status,
         "llm": llm_status,
     }
+
+
+@app.websocket("/api/ws/sessions/{session_id}")
+async def session_realtime_ws(
+    websocket: WebSocket,
+    session_id: str,
+    token: Optional[str] = Query(None),
+):
+    """Real-time session state push channel (Zero-polling Live Verification console)."""
+    try:
+        get_user_from_token(token)
+    except Exception:
+        await websocket.close(code=4401)
+        return
+
+    sess = db.get_session_by_id(session_id)
+    if not sess:
+        await websocket.close(code=4404)
+        return
+
+    realtime_hub.set_event_loop(asyncio.get_running_loop())
+    await realtime_hub.connect_ws(session_id, websocket)
+    try:
+        snapshot = conversation_agent._build_response(
+            sid=session_id,
+            action="session_snapshot",
+            target_id=sess.get("active_target_id"),
+            reply="",
+            newly_extracted=[],
+        )
+        await websocket.send_json({"type": "session_snapshot", "data": snapshot})
+
+        while True:
+            msg = await websocket.receive_text()
+            if msg == "ping":
+                await websocket.send_json({"type": "pong"})
+    except WebSocketDisconnect:
+        pass
+    except Exception as exc:
+        logger.debug(f"[WS] Session {session_id} stream ended: {exc}")
+    finally:
+        realtime_hub.disconnect_ws(session_id, websocket)

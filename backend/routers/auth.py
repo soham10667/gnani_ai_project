@@ -23,13 +23,12 @@ def create_access_token(user_data: Dict[str, Any]) -> str:
     token = jwt.encode(payload, settings.JWT_SECRET, algorithm=settings.JWT_ALGORITHM)
     return token
 
-def get_current_user(authorization: Optional[str] = Header(None)) -> Dict[str, Any]:
-    if not authorization or not authorization.startswith("Bearer "):
+def get_user_from_token(token: Optional[str]) -> Dict[str, Any]:
+    if not token:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Authorization token missing or invalid format"
+            detail="Authorization token missing",
         )
-    token = authorization.split(" ")[1]
     try:
         payload = jwt.decode(token, settings.JWT_SECRET, algorithms=[settings.JWT_ALGORITHM])
         user_id = payload.get("sub")
@@ -38,13 +37,24 @@ def get_current_user(authorization: Optional[str] = Header(None)) -> Dict[str, A
         user = db.get_user_by_id(user_id)
         if not user:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User account no longer exists")
-        # Do not return password hash
         user.pop("password_hash", None)
         return user
     except jwt.ExpiredSignatureError:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token has expired. Please login again.")
-    except Exception as e:
+    except HTTPException:
+        raise
+    except Exception:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid authentication credentials")
+
+
+def get_current_user(authorization: Optional[str] = Header(None)) -> Dict[str, Any]:
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authorization token missing or invalid format"
+        )
+    token = authorization.split(" ", 1)[1]
+    return get_user_from_token(token)
 
 @router.post("/register", response_model=AuthResponse)
 def register_user(req: UserRegisterRequest):

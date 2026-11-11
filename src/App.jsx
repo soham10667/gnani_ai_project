@@ -3,8 +3,8 @@ import {
   Mic, MicOff, Volume2, CheckCircle2, AlertTriangle, XCircle, RefreshCw,
   Search, Filter, ChevronRight, ArrowUpRight, ArrowDownRight, ShieldCheck,
   User, Phone, MapPin, CreditCard, Calendar, FileText, Settings, BarChart3,
-  History, LayoutDashboard, Radio, Play, Pause, RotateCcw, Check, X,
-  Sliders, Bell, Download, ExternalLink, HelpCircle, Sparkles, Building,
+  History, LayoutDashboard, Radio, Pause, RotateCcw, Check, X,
+  Sliders, Download, ExternalLink, HelpCircle, Sparkles, Building,
   Layers, Lock, Eye, AlertCircle, Info, ChevronDown, Clock, Timer, ShieldAlert,
   Menu, ChevronUp, Zap, CheckCircle, LogOut, Home, Mail, Wallet, Activity, Cpu,
   Server, MessageSquare
@@ -22,7 +22,6 @@ import {
   createSession,
   updateSession,
   transcribeAudioBlob,
-  transcribeSampleAudioAPI,
   processDialogueAPI,
   fetchVoiceStatusAPI,
   synthesizeSpeechAPI,
@@ -35,6 +34,7 @@ import {
 import LandingPage from './components/LandingPage';
 import LoginPage from './components/LoginPage';
 import RegisterPage from './components/RegisterPage';
+import LiveVerification from './components/LiveVerification';
 
 // --- PHONETIC ALPHABET DICTIONARY ---
 const NATO_PHONETIC = {
@@ -200,11 +200,11 @@ function EchoTrustLogo({ className = "w-6 h-6" }) {
   );
 }
 
-function EchoTrustDashboard({ user, onLogout, onGoHome }) {
-  // Navigation State - Defaults to Analytics as requested in the redesign prompt!
-  const [activeTab, setActiveTab] = useState('analytics'); // 'analytics', 'dashboard', 'live', 'entities', 'history', 'settings', 'audit_logs'
+function EchoTrustDashboard({ user, onLogout }) {
+  // Navigation State - Defaults cleanly to Live Verification officer console
+  const [activeTab, setActiveTab] = useState('live'); // 'analytics', 'dashboard', 'live', 'entities', 'history', 'settings', 'audit_logs'
+  const [liveCallStatus, setLiveCallStatus] = useState('Idle');
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-  const [dateFilter, setDateFilter] = useState('Last 30 Days');
   
   // Live Verification Session State (starts empty, populated only from real sessions)
   const [currentSessionId, setCurrentSessionId] = useState('');
@@ -357,7 +357,37 @@ function EchoTrustDashboard({ user, onLogout, onGoHome }) {
 
   const loadHealthStatus = async () => {
     const h = await fetchHealthAPI();
-    if (h) setHealthStatus(h);
+    if (h) {
+      setHealthStatus(h);
+      if (h.backend?.connected) {
+        setErrorBanner((prev) => (prev && /backend|failed to fetch/i.test(prev) ? '' : prev));
+      }
+    }
+  };
+
+  const handleLiveSessionSync = (syncState) => {
+    if (!syncState) return;
+    if (syncState.session_id) {
+      setCurrentSessionId(syncState.session_id);
+      currentSessionIdRef.current = syncState.session_id;
+    }
+    if (syncState.call_status) {
+      setLiveCallStatus(syncState.call_status);
+    }
+    if (syncState.customer_name && syncState.customer_name !== 'Pending Identification') {
+      setCustomerName(syncState.customer_name);
+    }
+    if (syncState.customer_id) setCustomerId(syncState.customer_id);
+    if (syncState.app_no) setAppNo(syncState.app_no);
+    if (Array.isArray(syncState.entities_list) && syncState.entities_list.length > 0) {
+      setEntities(
+        syncState.entities_list.map((e) => ({
+          ...e,
+          id: e.entity_type || e.id,
+          icon: ENTITY_ICONS[e.entity_type || e.id] || FileText,
+        }))
+      );
+    }
   };
 
   // Load live data from Backend API on mount & tab changes + auto-recovery
@@ -863,43 +893,6 @@ function EchoTrustDashboard({ user, onLogout, onGoHome }) {
     loadHealthStatus();
   };
 
-  // Play and Transcribe reference audio with Official Gnani STT
-  const handleProcessSampleAudio = async () => {
-    if (isProcessingAudio) {
-      setAudioFeedbackNotice('Please wait for current speech processing to complete...');
-      return;
-    }
-    setErrorBanner('');
-    const activeSess = await ensureSessionActive();
-    setIsProcessingAudio(true);
-    isProcessingAudioRef.current = true;
-    setAudioFeedbackNotice(`Transcribing reference sample with Official Gnani STT (${selectedSttLanguage})...`);
-
-    interruptAudioPlayback();
-
-    try {
-      const targetId = isCorrecting && correctionTarget ? correctionTarget.id : activeTargetIdRef.current;
-      const res = await transcribeSampleAudioAPI(activeSess, targetId, selectedSttLanguage);
-
-      syncBackendTurnState(res, res?.transcript);
-      if (res && res.transcript) {
-        const conf = res.confidence || 94.0;
-        setSttEngineStatus(`Gnani ${res.model || 'prisma-v3.0'} (${res.language_code || selectedSttLanguage})`);
-        const aiReply = res.reply || res.ai_response_text;
-        if (aiReply) {
-          await speakReadBack(aiReply, null, false);
-        }
-        setAudioFeedbackNotice(`Transcribed successfully via Official Gnani STT (${conf}% confidence)`);
-      }
-    } catch (err) {
-      setErrorBanner(`Sample audio STT failed: ${err.message}`);
-      setAudioFeedbackNotice('Failed to process sample audio with Gnani STT API.');
-    } finally {
-      setIsProcessingAudio(false);
-      isProcessingAudioRef.current = false;
-    }
-  };
-
   // Convert browser-recorded audio blob (e.g. WebM/OGG) to clean 16kHz mono 16-bit PCM WAV for EchoTrust STT
   const convertBlobToWav = async (blob) => {
     try {
@@ -1392,11 +1385,11 @@ function EchoTrustDashboard({ user, onLogout, onGoHome }) {
   const currentFocusedEntity = activeEntityIndex !== null ? entities[activeEntityIndex] : null;
   const hasActiveFocusedEntity = Boolean(currentFocusedEntity && currentFocusedEntity.value && currentFocusedEntity.value.trim().length > 0);
 
-  // Navigation Items matching the redesign specification:
+  // Navigation Items matching Live Verification console:
   const NAV_ITEMS = [
+    { id: 'live', label: 'Live Verification', icon: Mic, badge: liveCallStatus === 'Live' ? 'Live' : null },
     { id: 'analytics', label: 'Analytics', icon: BarChart3 },
     { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
-    { id: 'live', label: 'Live Verification', icon: Mic, badge: 'Active' },
     { id: 'entities', label: 'Entity Analysis', icon: Layers },
     { id: 'history', label: 'History', icon: History },
     { id: 'settings', label: 'Settings', icon: Settings },
@@ -1481,23 +1474,8 @@ function EchoTrustDashboard({ user, onLogout, onGoHome }) {
           </div>
         </div>
 
-        {/* Sidebar Pinned Footer: Home Shortcut & User Profile with Logout */}
+        {/* Sidebar Pinned Footer: User Profile with Logout (no View Landing Page shortcut) */}
         <div className="p-3 border-t border-slate-100 bg-slate-50/70 space-y-2 shrink-0">
-          {/* Back to Landing Page Shortcut */}
-          {onGoHome && (
-            <button
-              onClick={onGoHome}
-              className="w-full flex items-center justify-between px-3 py-2 text-xs font-semibold text-slate-600 hover:text-slate-900 hover:bg-white rounded-xl border border-transparent hover:border-slate-200 transition cursor-pointer shadow-2xs group"
-              title="Return to Public Landing Page"
-            >
-              <div className="flex items-center space-x-2.5">
-                <Home className="w-4 h-4 text-emerald-600 group-hover:scale-105 transition-transform" />
-                <span>View Landing Page</span>
-              </div>
-              <ArrowUpRight className="w-3.5 h-3.5 text-slate-400 group-hover:text-emerald-600 transition-colors" />
-            </button>
-          )}
-
           {/* User Profile Card with Direct Logout Button */}
           <div className="p-2.5 rounded-2xl bg-white border border-slate-200/90 shadow-2xs flex items-center justify-between gap-2">
             <div className="flex items-center space-x-2.5 min-w-0">
@@ -1570,44 +1548,6 @@ function EchoTrustDashboard({ user, onLogout, onGoHome }) {
                     : 'BFSI acoustic entity extraction, phonetic read-back confirmation, and correction loop management.'}
                 </p>
               </div>
-            </div>
-
-            {/* Right Controls: System Status Badge, Date Filter Dropdown, Notification Icon */}
-            <div className="flex items-center space-x-3 shrink-0">
-              {/* Active System Status Pill */}
-              <div className="hidden sm:inline-flex items-center space-x-2 px-3 py-1.5 rounded-xl bg-emerald-50 border border-emerald-200/80 text-emerald-800 text-xs font-semibold shadow-2xs">
-                <span className="relative flex h-2 w-2">
-                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                  <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
-                </span>
-                <span>System Active</span>
-              </div>
-
-              {/* Date Filter Dropdown */}
-              <div className="relative">
-                <div className="flex items-center space-x-2 bg-slate-50 border border-slate-200 hover:border-slate-300 text-slate-700 text-xs font-semibold px-3 py-2 rounded-xl transition shadow-2xs cursor-pointer">
-                  <Calendar className="w-3.5 h-3.5 text-emerald-600" />
-                  <select
-                    value={dateFilter}
-                    onChange={(e) => setDateFilter(e.target.value)}
-                    className="bg-transparent border-none outline-none text-xs font-semibold text-slate-700 cursor-pointer pr-1"
-                  >
-                    <option value="Last 24 Hours">Last 24 Hours</option>
-                    <option value="Last 7 Days">Last 7 Days</option>
-                    <option value="Last 30 Days">Last 30 Days</option>
-                    <option value="Custom Range">Custom Range</option>
-                  </select>
-                </div>
-              </div>
-
-              {/* Notification Icon */}
-              <button
-                className="relative p-2 rounded-xl text-slate-500 hover:text-slate-800 hover:bg-slate-100 transition border border-slate-200 shadow-2xs cursor-pointer"
-                title="Notifications"
-              >
-                <Bell className="w-4 h-4" />
-                <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-emerald-500 ring-2 ring-white"></span>
-              </button>
             </div>
           </div>
         </header>
@@ -1705,7 +1645,7 @@ function EchoTrustDashboard({ user, onLogout, onGoHome }) {
                   <div className="mt-3 flex items-baseline justify-between">
                     <span className="text-3xl font-extrabold text-slate-900 tracking-tight">{ds.average_confidence ?? 0}%</span>
                     <span className="text-xs font-bold text-purple-700 bg-purple-50 px-2 py-0.5 rounded-lg border border-purple-200">
-                      8 BFSI Entities
+                      Dual STT+Val
                     </span>
                   </div>
                   <p className="text-[11px] text-slate-400 mt-1.5 font-medium">Mean acoustic & validation score from DB</p>
@@ -1738,16 +1678,23 @@ function EchoTrustDashboard({ user, onLogout, onGoHome }) {
                     </div>
                   </div>
                   <div className="h-72">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <BarChart data={corrChart} margin={{ top: 15, right: 10, left: -10, bottom: 5 }}>
-                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#F1F5F9" />
-                        <XAxis dataKey="entity" stroke="#64748B" fontSize={11} fontWeight={600} tickLine={false} />
-                        <YAxis stroke="#94A3B8" fontSize={11} tickLine={false} axisLine={false} allowDecimals={false} />
-                        <Tooltip contentStyle={{ backgroundColor: '#0F172A', borderColor: '#334155', borderRadius: '12px', color: '#fff', fontSize: '12px' }} />
-                        <Bar dataKey="autoConfirmed" fill="#10B981" name="Confirmed" radius={[5, 5, 0, 0]} />
-                        <Bar dataKey="corrections" fill="#F59E0B" name="Corrected" radius={[5, 5, 0, 0]} />
-                      </BarChart>
-                    </ResponsiveContainer>
+                    {corrChart.length === 0 ? (
+                      <div className="h-full rounded-xl bg-slate-50 border border-dashed border-slate-200 flex flex-col items-center justify-center text-slate-400 text-xs">
+                        <BarChart3 className="w-6 h-6 mb-2 text-slate-300" />
+                        <span>{healthStatus?.backend?.connected ? 'No entity records yet — run a Live Verification call.' : 'Waiting for EchoTrust backend connection...'}</span>
+                      </div>
+                    ) : (
+                      <ResponsiveContainer width="100%" height="100%">
+                        <BarChart data={corrChart} margin={{ top: 15, right: 10, left: -10, bottom: 5 }}>
+                          <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#F1F5F9" />
+                          <XAxis dataKey="entity" stroke="#64748B" fontSize={11} fontWeight={600} tickLine={false} />
+                          <YAxis stroke="#94A3B8" fontSize={11} tickLine={false} axisLine={false} allowDecimals={false} />
+                          <Tooltip contentStyle={{ backgroundColor: '#0F172A', borderColor: '#334155', borderRadius: '12px', color: '#fff', fontSize: '12px' }} />
+                          <Bar dataKey="autoConfirmed" fill="#10B981" name="Confirmed" radius={[5, 5, 0, 0]} />
+                          <Bar dataKey="corrections" fill="#F59E0B" name="Corrected" radius={[5, 5, 0, 0]} />
+                        </BarChart>
+                      </ResponsiveContainer>
+                    )}
                   </div>
                 </div>
 
@@ -1759,21 +1706,28 @@ function EchoTrustDashboard({ user, onLogout, onGoHome }) {
                     </div>
                   </div>
                   <div className="h-72">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <AreaChart data={confChart} margin={{ top: 15, right: 10, left: -10, bottom: 5 }}>
-                        <defs>
-                          <linearGradient id="purpleGradient" x1="0" y1="0" x2="0" y2="1">
-                            <stop offset="5%" stopColor="#8B5CF6" stopOpacity={0.4} />
-                            <stop offset="95%" stopColor="#8B5CF6" stopOpacity={0.02} />
-                          </linearGradient>
-                        </defs>
-                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#F1F5F9" />
-                        <XAxis dataKey="bracket" stroke="#64748B" fontSize={11} fontWeight={600} tickLine={false} />
-                        <YAxis stroke="#94A3B8" fontSize={11} tickLine={false} axisLine={false} allowDecimals={false} />
-                        <Tooltip contentStyle={{ backgroundColor: '#0F172A', borderColor: '#334155', borderRadius: '12px', color: '#fff', fontSize: '12px' }} />
-                        <Area type="monotone" dataKey="count" stroke="#8B5CF6" strokeWidth={3} fill="url(#purpleGradient)" name="Entities in Bracket" />
-                      </AreaChart>
-                    </ResponsiveContainer>
+                    {confChart.length === 0 ? (
+                      <div className="h-full rounded-xl bg-slate-50 border border-dashed border-slate-200 flex flex-col items-center justify-center text-slate-400 text-xs">
+                        <Activity className="w-6 h-6 mb-2 text-slate-300" />
+                        <span>{healthStatus?.backend?.connected ? 'Confidence distribution populates as entities are verified.' : 'Waiting for EchoTrust backend connection...'}</span>
+                      </div>
+                    ) : (
+                      <ResponsiveContainer width="100%" height="100%">
+                        <AreaChart data={confChart} margin={{ top: 15, right: 10, left: -10, bottom: 5 }}>
+                          <defs>
+                            <linearGradient id="purpleGradient" x1="0" y1="0" x2="0" y2="1">
+                              <stop offset="5%" stopColor="#8B5CF6" stopOpacity={0.4} />
+                              <stop offset="95%" stopColor="#8B5CF6" stopOpacity={0.02} />
+                            </linearGradient>
+                          </defs>
+                          <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#F1F5F9" />
+                          <XAxis dataKey="bracket" stroke="#64748B" fontSize={11} fontWeight={600} tickLine={false} />
+                          <YAxis stroke="#94A3B8" fontSize={11} tickLine={false} axisLine={false} allowDecimals={false} />
+                          <Tooltip contentStyle={{ backgroundColor: '#0F172A', borderColor: '#334155', borderRadius: '12px', color: '#fff', fontSize: '12px' }} />
+                          <Area type="monotone" dataKey="count" stroke="#8B5CF6" strokeWidth={3} fill="url(#purpleGradient)" name="Entities in Bracket" />
+                        </AreaChart>
+                      </ResponsiveContainer>
+                    )}
                   </div>
                 </div>
               </div>
@@ -2017,490 +1971,14 @@ function EchoTrustDashboard({ user, onLogout, onGoHome }) {
               TAB: LIVE VERIFICATION
              ========================================================= */}
           {activeTab === 'live' && (
-            <div className="space-y-6">
-              {/* Customer Banner */}
-              <div className="bg-white rounded-2xl border border-slate-200/90 p-5 shadow-xs flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-                <div className="flex items-center space-x-4">
-                  <div className={`w-12 h-12 rounded-xl flex items-center justify-center font-bold text-lg shadow-xs border ${
-                    customerName ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-slate-100 text-slate-400 border-slate-200'
-                  }`}>
-                    {customerName ? customerName.split(' ').map(n => n[0]).join('').slice(0, 2) : <User className="w-6 h-6 text-slate-400" />}
-                  </div>
-                  <div>
-                    <div className="flex flex-wrap items-center gap-2">
-                      <h2 className="text-lg font-bold text-slate-900">
-                        {customerName || (currentSessionId ? 'Awaiting Customer Identification...' : 'Ready for Verification Call')}
-                      </h2>
-                      <span className={`px-2 py-0.5 rounded-md text-xs font-semibold border ${
-                        currentSessionId
-                          ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
-                          : 'bg-slate-100 text-slate-500 border-slate-200'
-                      }`}>
-                        {currentSessionId ? 'Live Call / Session Active' : 'Session Idle'}
-                      </span>
-                      {isAutonomousMode && (
-                        <span className="inline-flex items-center space-x-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-500/10 text-emerald-800 border border-emerald-300">
-                          <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-                          <span>Autonomous Voice Loop Active</span>
-                        </span>
-                      )}
-                    </div>
-                    <div className="flex flex-wrap items-center gap-x-4 text-xs text-slate-500 mt-0.5">
-                      <span>Customer ID: <strong className="text-slate-700 font-mono">{customerId || 'Waiting for capture...'}</strong></span>
-                      <span>App No: <strong className="text-slate-700 font-mono">{appNo || 'Pending'}</strong></span>
-                      <span>Session ID: <strong className="text-slate-700 font-mono">{currentSessionId || 'None'}</strong></span>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Call Controls */}
-                <div className="flex flex-wrap items-center gap-2.5 w-full md:w-auto justify-end">
-                  <div className="flex items-center space-x-2 bg-slate-100 px-3 py-1.5 rounded-xl border border-slate-200">
-                    <span className={`w-2.5 h-2.5 rounded-full ${isRecording ? 'bg-rose-500 animate-ping' : isPlayingAudio ? 'bg-emerald-500 animate-pulse' : 'bg-slate-400'}`}></span>
-                    <span className="text-xs font-mono font-bold text-slate-800">{formatDuration(callDuration)}</span>
-                    <span className="text-[10px] text-slate-400 uppercase font-semibold">
-                      {isRecording ? 'Listening...' : isPlayingAudio ? 'AI Speaking' : 'Live Call'}
-                    </span>
-                  </div>
-
-                  {isPlayingAudio && (
-                    <button
-                      onClick={interruptAudioPlayback}
-                      className="flex items-center space-x-1.5 px-3 py-2 rounded-xl font-semibold text-xs bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-300 transition shadow-xs cursor-pointer animate-pulse"
-                      title="Interrupt AI Speech"
-                    >
-                      <Pause className="w-3.5 h-3.5 text-amber-700 fill-current" />
-                      <span>Interrupt AI</span>
-                    </button>
-                  )}
-
-                  {/* Primary 1-Click Automated Call Start */}
-                  <button
-                    onClick={handleStartAutomatedSession}
-                    disabled={isProcessingAudio}
-                    className="flex items-center space-x-2 px-4 py-2 rounded-xl font-bold text-xs sm:text-sm bg-gradient-to-r from-emerald-600 via-teal-600 to-emerald-700 hover:from-emerald-700 hover:to-teal-800 text-white shadow-md hover:shadow-lg transition cursor-pointer"
-                    title="Start Automated Hands-Free Verification Call (Plays Shivani greeting & auto-listens)"
-                  >
-                    <Sparkles className="w-4 h-4 text-emerald-200" />
-                    <span>{currentSessionId ? 'Restart Automated Call' : 'Start Automated KYC Call'}</span>
-                  </button>
-
-                  {/* Auto-Loop Toggle Button */}
-                  <button
-                    onClick={() => {
-                      setIsAutonomousMode(prev => {
-                        const next = !prev;
-                        isAutonomousModeRef.current = next;
-                        if (!next && isRecordingRef.current) {
-                          stopMicrophoneCapture();
-                        }
-                        return next;
-                      });
-                    }}
-                    className={`flex items-center space-x-1.5 px-3 py-2 rounded-xl text-xs font-semibold border transition cursor-pointer ${
-                      isAutonomousMode
-                        ? 'bg-emerald-50 text-emerald-800 border-emerald-300'
-                        : 'bg-slate-100 text-slate-600 border-slate-300'
-                    }`}
-                    title="Toggle Hands-Free Voice Auto-Loop"
-                  >
-                    <span className={`w-2 h-2 rounded-full ${isAutonomousMode ? 'bg-emerald-500 animate-pulse' : 'bg-slate-400'}`}></span>
-                    <span>{isAutonomousMode ? 'Auto: ON' : 'Auto: OFF'}</span>
-                  </button>
-
-                  {/* Manual Mic Button */}
-                  <button
-                    onClick={handleToggleRecording}
-                    disabled={isProcessingAudio}
-                    className={`flex items-center space-x-2 px-3.5 py-2 rounded-xl font-semibold text-xs shadow-sm transition cursor-pointer ${
-                      isRecording
-                        ? 'bg-rose-600 hover:bg-rose-700 text-white animate-pulse'
-                        : isProcessingAudio
-                        ? 'bg-indigo-600 text-white cursor-wait'
-                        : 'bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200'
-                    }`}
-                    title={isRecording ? 'Click to stop speech and process' : 'Manual Mic Capture'}
-                  >
-                    {isRecording ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
-                    <span>{isRecording ? 'Listening (Stop)' : isProcessingAudio ? 'Processing...' : 'Manual Mic'}</span>
-                  </button>
-
-                  <button
-                    onClick={handleProcessSampleAudio}
-                    disabled={isProcessingAudio}
-                    className="flex items-center space-x-1.5 px-3 py-2 rounded-xl font-semibold text-xs bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 transition shadow-xs cursor-pointer"
-                    title="Play and transcribe reference audio"
-                  >
-                    <Play className="w-3.5 h-3.5 text-emerald-600 fill-emerald-600" />
-                    <span>Reference Audio</span>
-                  </button>
-                </div>
-              </div>
-
-              {/* Main Interactive Grid */}
-              <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-                {/* Voice Interaction & Dialogue Panel (7 Cols) */}
-                <div className="lg:col-span-7 space-y-6">
-                  {/* Waveform Card */}
-                  <div className="bg-white rounded-2xl border border-slate-200/90 shadow-xs overflow-hidden flex flex-col">
-                    <div className="p-4 bg-[#0A1A12] text-white flex flex-wrap items-center justify-between gap-3 border-b border-emerald-950">
-                      <div className="flex items-center space-x-3">
-                        <div className="p-2 rounded-lg bg-emerald-500/20 text-emerald-400">
-                          <Radio className="w-4 h-4 animate-pulse" />
-                        </div>
-                        <div>
-                          <div className="flex items-center space-x-2">
-                            <h3 className="text-sm font-semibold text-white">Live Voice Entity Capture & Synthesizer</h3>
-                            <span className="text-[10px] bg-emerald-500/20 text-emerald-300 border border-emerald-400/30 px-1.5 py-0.5 rounded font-mono">
-                              Official Gnani AI Active
-                            </span>
-                          </div>
-                          <p className="text-[11px] text-emerald-300/70">
-                            STT: Prisma-v3.0 ({selectedSttLanguage === 'indic-auto' ? 'Auto Hinglish (hi-IN + en-IN)' : selectedSttLanguage}) | TTS: Timbre-v3.0 ({selectedTtsVoice})
-                          </p>
-                        </div>
-                      </div>
-
-                      {/* STT Language & Voice Controls */}
-                      <div className="flex flex-wrap items-center gap-2.5">
-                        <div className="flex items-center space-x-1.5">
-                          <span className="text-[11px] text-emerald-300/80 font-medium">STT Lang:</span>
-                          <select
-                            value={selectedSttLanguage}
-                            onChange={(e) => setSelectedSttLanguage(e.target.value)}
-                            className="bg-emerald-950/90 text-emerald-100 text-xs rounded-lg border border-emerald-700/60 px-2 py-1 focus:outline-none focus:ring-1 focus:ring-emerald-400 cursor-pointer"
-                            title="STT Language (Hindi, English, and Hinglish Auto)"
-                          >
-                            <option value="indic-auto">Hindi + English + Hinglish (Auto)</option>
-                            <option value="hi-IN">Hindi / Hinglish (hi-IN)</option>
-                            <option value="en-IN">English / Hinglish (en-IN)</option>
-                          </select>
-                        </div>
-
-                        {/* Voice Tone Selector */}
-                        <div className="flex items-center space-x-1.5">
-                          <span className="text-[11px] text-emerald-300/80 font-medium">Voice:</span>
-                          <select
-                            value={selectedTtsVoice}
-                            onChange={(e) => setSelectedTtsVoice(e.target.value)}
-                            className="bg-emerald-950/90 text-emerald-100 text-xs rounded-lg border border-emerald-700/60 px-2 py-1 focus:outline-none focus:ring-1 focus:ring-emerald-400 cursor-pointer"
-                            title="Select Gnani Timbre v3.0 Voice Tone"
-                          >
-                            <option value="Devansh">Devansh (Indian Male - Selected Default)</option>
-                            <option value="Yashraj">Yashraj (Indian Male - Deep Tone)</option>
-                            <option value="Shubham">Shubham (Indian Male - Conversational)</option>
-                            <option value="Prakash">Prakash (Indian Male - BFSI)</option>
-                            <option value="Shivani">Shivani (Indian Female - Hinglish)</option>
-                            <option value="Kaveri">Kaveri (Indian Female - v2.5)</option>
-                            <option value="Nalini">Nalini (Indian Female - v2.5)</option>
-                          </select>
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Real-time Dynamic Audio Waveform */}
-                    <div className="bg-gradient-to-b from-[#0A1A12] to-[#040C08] px-6 py-4 flex items-center justify-center border-t border-emerald-950">
-                      <div className="flex items-center space-x-1.5 h-12 w-full max-w-md justify-center">
-                        {audioWaveformHeights.map((h, i) => (
-                          <div
-                            key={i}
-                            className={`w-1.5 rounded-full transition-all duration-150 ${
-                              isRecording || isPlayingAudio
-                                ? 'bg-gradient-to-t from-emerald-500 via-teal-400 to-green-300'
-                                : 'bg-slate-800'
-                            }`}
-                            style={{ height: isRecording || isPlayingAudio ? `${h}%` : '20%' }}
-                          />
-                        ))}
-                      </div>
-                    </div>
-
-                    {/* Conversation Stream */}
-                    <div className="p-4 bg-slate-50 border-t border-slate-200 flex-1 max-h-[380px] overflow-y-auto space-y-3">
-                      {dialogue.length === 0 ? (
-                        <div className="py-12 flex flex-col items-center justify-center text-center">
-                          <div className="w-12 h-12 rounded-2xl bg-emerald-50 text-emerald-600 flex items-center justify-center mb-3 border border-emerald-100">
-                            <Mic className="w-6 h-6" />
-                          </div>
-                          <h4 className="text-sm font-bold text-slate-800">No Dialogue Messages Yet</h4>
-                          <p className="text-xs text-slate-500 max-w-sm mt-1">
-                            Click <strong>"Start Voice Capture"</strong> or <strong>"Play & Transcribe generated-audio.wav"</strong> or type below to begin real-time speech verification.
-                          </p>
-                        </div>
-                      ) : (
-                        <>
-                          <div className="text-center">
-                            <span className="text-[10px] uppercase font-bold text-slate-400 tracking-wider bg-white px-2.5 py-0.5 rounded-full border border-slate-200">
-                              Live Voice Stream Active
-                            </span>
-                          </div>
-
-                          {dialogue.map((msg) => (
-                            <div key={msg.id} className={`flex flex-col ${msg.sender === 'user' ? 'items-end' : 'items-start'}`}>
-                              <div className="flex items-center space-x-1.5 mb-1 px-1">
-                                <span className="text-[10px] font-bold text-slate-500 capitalize">
-                                  {msg.sender === 'ai' ? '🤖 EchoTrust AI' : `👤 Customer (${customerName ? customerName.split(' ')[0] : 'Speaker'})`}
-                                </span>
-                                <span className="text-[9px] text-slate-400">{msg.time}</span>
-                              </div>
-                              <div className={`max-w-[85%] rounded-2xl px-4 py-2.5 text-xs shadow-xs leading-relaxed ${
-                                msg.sender === 'user' ? 'bg-gradient-to-r from-emerald-600 to-teal-600 text-white rounded-br-xs' : 'bg-white text-slate-800 border border-slate-200 rounded-bl-xs'
-                              }`}>
-                                <p>{msg.text}</p>
-                                {msg.phonetic && (
-                                  <div className="mt-2 pt-2 border-t border-slate-100 flex items-center justify-between">
-                                    <span className="text-[10px] font-semibold text-emerald-800 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
-                                      Phonetic Read-Back Enabled
-                                    </span>
-                                    <button onClick={() => speakReadBack(msg.text)} className="text-[10px] font-semibold text-slate-600 hover:text-emerald-700 flex items-center space-x-1 cursor-pointer">
-                                      <Volume2 className="w-3 h-3" />
-                                      <span>Re-hear</span>
-                                    </button>
-                                  </div>
-                                )}
-                              </div>
-                            </div>
-                          ))}
-                        </>
-                      )}
-                    </div>
-
-                    {/* Quick Simulated Input */}
-                    <div className="p-3 bg-white border-t border-slate-200 flex items-center space-x-2">
-                      <input
-                        type="text"
-                        placeholder="Simulate customer speech input (e.g. My name is Rahul Sharma or PAN ABCDE1234F)..."
-                        className="flex-1 text-xs border border-slate-200 rounded-xl px-3 py-2 focus:ring-1 focus:ring-emerald-500 focus:border-emerald-500 outline-none"
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter' && e.target.value.trim()) {
-                            handleSimulatedSpeechInput(e.target.value);
-                            e.target.value = '';
-                          }
-                        }}
-                      />
-                      <button
-                        onClick={() => {
-                          if (hasActiveFocusedEntity) {
-                            const phonetics = getPhoneticSpelling(currentFocusedEntity.value).map(p => `${p.char} as in ${p.code}`).join(', ');
-                            speakReadBack(`Please confirm your captured ${currentFocusedEntity.label}: ${currentFocusedEntity.value}. Phonetic confirmation: ${phonetics}. Is this accurate?`);
-                          } else {
-                            speakReadBack("EchoTrust intelligent voice verification system active. Please speak your full name, phone number, or address.");
-                          }
-                        }}
-                        className="px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-semibold flex items-center space-x-1 cursor-pointer"
-                      >
-                        <Volume2 className="w-3.5 h-3.5" />
-                        <span>Speak AI Prompt</span>
-                      </button>
-                    </div>
-                  </div>
-
-                  {/* Phonetic Disambiguation Engine Panel */}
-                  <div className="bg-gradient-to-br from-slate-900 via-emerald-950 to-teal-950 text-white rounded-2xl p-5 shadow-lg relative overflow-hidden border border-emerald-900/50">
-                    <div className="flex items-center justify-between mb-3 relative z-10">
-                      <div className="flex items-center space-x-2">
-                        <Sparkles className="w-5 h-5 text-emerald-400" />
-                        <h3 className="font-bold text-sm tracking-wide uppercase text-emerald-200">
-                          Phonetic Disambiguation Engine
-                        </h3>
-                      </div>
-                      <span className={`text-xs px-2.5 py-0.5 rounded-full border ${
-                        hasActiveFocusedEntity && currentFocusedEntity
-                          ? 'bg-emerald-500/20 text-emerald-200 border-emerald-400/30'
-                          : 'bg-slate-800/80 text-slate-400 border-slate-700'
-                      }`}>
-                        {hasActiveFocusedEntity && currentFocusedEntity
-                          ? `Active Target: ${currentFocusedEntity.label}`
-                          : 'Engine Idle / Standby'}
-                      </span>
-                    </div>
-
-                    {hasActiveFocusedEntity && currentFocusedEntity ? (
-                      <>
-                        {/* NATO Decomposed Chips */}
-                        <div className="bg-white/10 backdrop-blur-md rounded-xl p-4 border border-white/15 relative z-10 mb-4">
-                          <div className="flex items-center justify-between mb-2">
-                            <span className="text-xs text-emerald-200">Captured Value:</span>
-                            <span className="font-mono text-sm font-bold text-white tracking-wider bg-black/40 px-2.5 py-0.5 rounded border border-white/10">
-                              {currentFocusedEntity.value}
-                            </span>
-                          </div>
-                          <div className="flex flex-wrap gap-1.5 max-h-28 overflow-y-auto pr-1">
-                            {getPhoneticSpelling(currentFocusedEntity.value).map((item, idx) => (
-                              <div key={idx} className="flex items-center space-x-1 bg-white/15 px-2 py-1 rounded-md text-xs border border-white/15">
-                                <span className="font-bold text-emerald-300 font-mono">{item.char}</span>
-                                <span className="text-slate-300 text-[10px]">→</span>
-                                <span className="text-white font-medium">{item.code}</span>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-
-                        {/* Actions */}
-                        <div className="bg-black/40 rounded-xl p-4 border border-emerald-900/60 relative z-10 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
-                          <div>
-                            <div className="text-xs font-bold text-white">"Did we capture your information correctly?"</div>
-                            <div className="text-[11px] text-emerald-300/80">Awaiting customer vocal confirmation or agent override</div>
-                          </div>
-                          <div className="flex items-center space-x-2 w-full sm:w-auto">
-                            <button
-                              onClick={() => {
-                                speakReadBack(`Spelling confirmation for ${currentFocusedEntity.label}: ${getPhoneticSpelling(currentFocusedEntity.value).map(p => `${p.char} as in ${p.code}`).join('. ')}. Is this correct?`);
-                              }}
-                              className="px-3 py-2 bg-emerald-800 hover:bg-emerald-700 text-white rounded-xl text-xs font-semibold flex items-center space-x-1.5 transition cursor-pointer"
-                            >
-                              <Volume2 className="w-3.5 h-3.5" />
-                              <span>Play Gnani Voice</span>
-                            </button>
-                            <button
-                              onClick={() => handleConfirmEntity(currentFocusedEntity.id)}
-                              className="flex-1 sm:flex-none px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold flex items-center justify-center space-x-1.5 shadow-md shadow-emerald-900/30 transition cursor-pointer"
-                            >
-                              <Check className="w-4 h-4" />
-                              <span>Yes, Confirm</span>
-                            </button>
-                            <button
-                              onClick={() => initiateCorrection(currentFocusedEntity)}
-                              className="flex-1 sm:flex-none px-4 py-2 bg-rose-600 hover:bg-rose-500 text-white rounded-xl text-xs font-bold flex items-center justify-center space-x-1.5 shadow-md shadow-rose-900/30 transition cursor-pointer"
-                            >
-                              <X className="w-4 h-4" />
-                              <span>No, Correct It</span>
-                            </button>
-                          </div>
-                        </div>
-                      </>
-                    ) : (
-                      <div className="bg-white/5 backdrop-blur-md rounded-xl p-6 border border-white/10 text-center relative z-10 my-2">
-                        <div className="w-12 h-12 mx-auto rounded-full bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 mb-3">
-                          <Sparkles className="w-6 h-6 animate-pulse" />
-                        </div>
-                        <h4 className="text-sm font-semibold text-white mb-1">Awaiting Entity Verification</h4>
-                        <p className="text-xs text-slate-300/80 max-w-sm mx-auto">
-                          Speak into the microphone or click "Play & Transcribe generated-audio.wav" to extract customer entities and activate real-time phonetic disambiguation.
-                        </p>
-                      </div>
-                    )}
-                  </div>
-                </div>
-
-                {/* Right: Captured Entity Cards & Confidence (5 Cols) */}
-                <div className="lg:col-span-5 space-y-3">
-                  <div className="flex items-center justify-between">
-                    <h3 className="font-bold text-slate-800 text-sm tracking-tight flex items-center space-x-2">
-                      <Layers className="w-4 h-4 text-emerald-600" />
-                      <span>Captured Entities & Confidence</span>
-                    </h3>
-                    <span className="text-xs font-semibold text-slate-500">
-                      {entities.filter(e => e.status === 'verified').length} of {entities.length} Confirmed
-                    </span>
-                  </div>
-
-                  {entities.map((entity, idx) => {
-                    const Icon = entity.icon || ENTITY_ICONS[entity.id] || User;
-                    const confStyle = getConfidenceBadge(entity.confidence);
-                    const isSelected = activeEntityIndex === idx;
-                    const hasValue = Boolean(entity.value && entity.value.trim().length > 0);
-
-                    return (
-                      <div
-                        key={entity.id}
-                        onClick={() => {
-                          if (hasValue) setActiveEntityIndex(idx);
-                        }}
-                        className={`bg-white rounded-2xl p-4 border transition-all shadow-xs relative ${
-                          hasValue ? 'cursor-pointer' : 'cursor-default opacity-85'
-                        } ${
-                          isSelected && hasValue
-                            ? 'border-emerald-600 ring-2 ring-emerald-500/20 bg-emerald-50/20'
-                            : 'border-slate-200 hover:border-slate-300'
-                        }`}
-                      >
-                        <div className="flex items-start justify-between">
-                          <div className="flex items-center space-x-2.5">
-                            <div className={`p-2 rounded-xl ${isSelected && hasValue ? 'bg-emerald-600 text-white' : 'bg-slate-100 text-slate-600'}`}>
-                              <Icon className="w-4 h-4" />
-                            </div>
-                            <div>
-                              <div className="text-xs font-bold text-slate-900">{entity.label}</div>
-                              <div className="font-mono text-sm font-semibold text-slate-800 tracking-tight mt-0.5">
-                                {hasValue ? (
-                                  entity.value
-                                ) : (
-                                  <span className="text-slate-400 font-sans italic font-normal text-xs">Waiting for vocal input...</span>
-                                )}
-                              </div>
-                            </div>
-                          </div>
-                          <span className={`px-2 py-0.5 rounded text-[11px] font-bold border ${hasValue ? confStyle.bg : 'bg-slate-100 text-slate-400 border-slate-200'}`}>
-                            {hasValue ? `${entity.confidence}% Conf.` : '0% Conf.'}
-                          </span>
-                        </div>
-
-                        {/* Progress Bar */}
-                        <div className="mt-3">
-                          <div className="w-full bg-slate-100 h-1.5 rounded-full overflow-hidden">
-                            <div
-                              className={`h-full rounded-full transition-all duration-500 ${hasValue ? confStyle.bar : 'bg-slate-200'}`}
-                              style={{ width: `${hasValue ? entity.confidence : 0}%` }}
-                            />
-                          </div>
-                        </div>
-
-                        {/* Phonetics Preview */}
-                        <div className="mt-2 text-[11px] text-slate-500 bg-slate-50 p-2 rounded-lg border border-slate-100 flex items-center justify-between">
-                          <span className="truncate pr-2">
-                            <strong>Phonetics:</strong>{' '}
-                            {hasValue ? (
-                              entity.phoneticSummary
-                            ) : (
-                              <span className="italic text-slate-400">No phonetics captured yet</span>
-                            )}
-                          </span>
-                          {hasValue && (
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                speakReadBack(`Entity ${entity.label}: ${entity.value}`);
-                              }}
-                              className="text-emerald-700 hover:text-emerald-900 p-1 cursor-pointer"
-                            >
-                              <Volume2 className="w-3.5 h-3.5" />
-                            </button>
-                          )}
-                        </div>
-
-                        {/* Action buttons */}
-                        {hasValue && (
-                          <div className="mt-3 pt-2 border-t border-slate-100 flex items-center justify-end space-x-2">
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                initiateCorrection(entity);
-                              }}
-                              className="px-2.5 py-1 text-[11px] font-semibold text-slate-600 hover:text-slate-900 hover:bg-slate-100 rounded-lg transition cursor-pointer"
-                            >
-                              Manual Edit
-                            </button>
-                            {entity.status !== 'verified' && (
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  handleConfirmEntity(entity.id);
-                                }}
-                                className="px-3 py-1 text-[11px] font-bold text-white bg-emerald-600 hover:bg-emerald-700 rounded-lg transition shadow-xs flex items-center space-x-1 cursor-pointer"
-                              >
-                                <Check className="w-3 h-3" />
-                                <span>Confirm Match</span>
-                              </button>
-                            )}
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            </div>
+            <LiveVerification
+              initialSessionId={currentSessionId}
+              sttLanguage={selectedSttLanguage}
+              onSttLanguageChange={setSelectedSttLanguage}
+              ttsVoice={selectedTtsVoice}
+              onTtsVoiceChange={setSelectedTtsVoice}
+              onSessionSync={handleLiveSessionSync}
+            />
           )}
 
           {/* =========================================================

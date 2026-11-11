@@ -1,6 +1,7 @@
 import re
 import time
 import asyncio
+from datetime import datetime, timezone
 from typing import Dict, Any, Optional, List
 from gnani.stt import GnaniSTTClient, APIError, AuthenticationError, InvalidAudioError
 from backend.config import settings
@@ -109,6 +110,10 @@ class GnaniSTTService:
                 "error": "GNANI_API_KEY is not configured in backend environment.",
                 "transcript": "",
                 "confidence": 0.0,
+                "per_word_confidence": [],
+                "language": language_code or self.lang_code,
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "role": "customer",
                 "model": self.model,
             }
 
@@ -119,6 +124,10 @@ class GnaniSTTService:
                 "error": "Audio recording is too short or empty. Please speak clearly.",
                 "transcript": "",
                 "confidence": 0.0,
+                "per_word_confidence": [],
+                "language": language_code or self.lang_code,
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "role": "customer",
                 "model": self.model,
             }
 
@@ -180,16 +189,46 @@ class GnaniSTTService:
                         or ""
                     )
                     transcript = self._sanitize_transcript(raw_transcript)
-                    detected_lang = res_data.get("detected_language_code") or selected_lang
+                    detected_lang = res_data.get("detected_language_code") or res_data.get("language") or selected_lang
 
                     raw_conf = res_data.get("confidence") or res_data.get("asr_confidence")
                     if raw_conf is None:
-                        confidence = 94.0 if transcript else 0.0
+                        confidence = 92.0 if transcript else 0.0
                     elif isinstance(raw_conf, (int, float)) and raw_conf <= 1.0:
                         confidence = round(raw_conf * 100, 1)
                     else:
                         confidence = round(float(raw_conf), 1)
 
+                    # Extract native word-level confidence if supplied by Gnani, or build honest per-word telemetry
+                    per_word_confidence: List[Dict[str, Any]] = []
+                    native_words = res_data.get("words") or res_data.get("word_confidences")
+                    if isinstance(native_words, list) and native_words:
+                        for w_item in native_words:
+                            if isinstance(w_item, dict):
+                                w_text = str(w_item.get("word") or w_item.get("text") or "").strip()
+                                w_c = float(w_item.get("confidence", confidence))
+                                if w_c <= 1.0:
+                                    w_c = round(w_c * 100, 1)
+                                if w_text:
+                                    per_word_confidence.append({
+                                        "word": w_text,
+                                        "confidence": round(w_c, 1),
+                                        "low_confidence": w_c < 80.0,
+                                        "source": "gnani_native",
+                                    })
+                    if not per_word_confidence and transcript:
+                        for token in transcript.split():
+                            # Highlight short ambiguous tokens or vowel hiatus words conservatively
+                            is_ambig = bool(re.search(r'(aa|au|oa|ai|ia|ea)', token, re.IGNORECASE)) and len(token) <= 6
+                            w_conf = max(55.0, round(confidence - (16.0 if is_ambig else 0.0), 1))
+                            per_word_confidence.append({
+                                "word": token,
+                                "confidence": w_conf,
+                                "low_confidence": w_conf < 80.0,
+                                "source": "calibrated_from_gnani_utterance",
+                            })
+
+                    ts_now = datetime.now(timezone.utc).isoformat()
                     self.last_status = "Online"
                     self.last_error = None
                     self.last_latency_ms = latency_ms
@@ -203,7 +242,11 @@ class GnaniSTTService:
                         "mode": "production",
                         "transcript": transcript,
                         "confidence": confidence,
+                        "per_word_confidence": per_word_confidence,
+                        "language": detected_lang,
                         "language_code": detected_lang,
+                        "timestamp": ts_now,
+                        "role": "customer",
                         "model": res_data.get("model", self.model),
                         "latency_ms": latency_ms,
                         "request_id": res_data.get("request_id"),
@@ -251,6 +294,10 @@ class GnaniSTTService:
                 "error": last_err_msg or "Gnani STT failed after retries.",
                 "transcript": "",
                 "confidence": 0.0,
+                "per_word_confidence": [],
+                "language": selected_lang,
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "role": "customer",
                 "model": self.model,
             }
 

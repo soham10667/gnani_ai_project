@@ -79,17 +79,18 @@ def test_02_security_unauthenticated_blocked():
         assert res.status_code == 401, f"Expected 401 on {method} {path}, got {res.status_code}"
 
 
-# 3. ENTITY RECOGNITION: NAME, PHONE, ADDRESS, EMAIL, DATE, AMOUNT, ACCOUNT, PAN
+# 3. ENTITY RECOGNITION: NAME, PHONE, PAN, PINCODE, ADDRESS, EMAIL, DATE, AMOUNT, ACCOUNT
 def test_03_entity_recognition_all_bfsi_types():
     samples = [
         ("Mera naam Soham Sharma hai", "name", "Soham Sharma"),
         ("My phone number is 9876543210", "phone", "9876543210"),
         ("mera email soham dot sharma at gmail dot com hai", "email", "soham.sharma@gmail.com"),
         ("I stay at 24 MG Road, Pune, 411001", "address", "24 MG Road, Pune, 411001"),
+        ("Mera pincode 411001 hai", "pincode", "411001"),
         ("Loan amount is 50,000 rupees", "amount", "50,000"),
         ("My date of birth is 15 August 1998", "dob", "15/08/1998"),
         ("Account number 123456789012", "account", "123456789012"),
-        ("Mera PAN card ABCD E1234F hai", "id_doc", "ABCDE1234F"),
+        ("Mera PAN card ABCD E1234F hai", "pan", "ABCDE1234F"),
     ]
     for utterance, expected_id, expected_substr in samples:
         ents = entity_extractor.extract_all_entities(utterance, acoustic_confidence=92.0)
@@ -98,8 +99,9 @@ def test_03_entity_recognition_all_bfsi_types():
         assert expected_substr.lower() in matched[0]["value"].lower(), (
             f"Expected '{expected_substr}' in {matched[0]['value']}"
         )
-        # Strict security requirement: unconfirmed extractions must never start as 'verified'
-        assert matched[0]["status"] != "verified"
+        # Strict security requirement: unconfirmed extractions must never start as 'confirmed' or 'verified'
+        assert matched[0]["status"] not in ("confirmed", "verified")
+        assert "stt_confidence" in matched[0] and "validator_confidence" in matched[0]
 
 
 # 3B. LLM ORCHESTRATION UNIT HOOK & HONEST REPORTING
@@ -212,42 +214,39 @@ def test_05_real_gnani_stt_hindi_english_hinglish(auth_headers):
         time.sleep(1.6)
 
 
-# 6. UNCONFIRMED ISOLATION + ENTITY CORRECTION + CONFIRMATION + DB PERSISTENCE
+# 6. UNCONFIRMED ISOLATION + ENTITY CORRECTION + CONFIRMATION + CONFIGURABLE FLOW + DB PERSISTENCE
 def test_06_multi_turn_verification_correction_and_database(auth_headers):
-    res_sess = client.post(
-        "/api/sessions/",
+    start_res = client.post(
+        "/api/sessions/new/start",
         headers=auth_headers,
-        json={"customer_name": "Pending KYC Applicant", "channel": "Automated Voice Agent"},
+        json={"phonetic_scheme": "indian"},
     )
-    assert res_sess.status_code == 200
-    sid = res_sess.json()["id"]
+    assert start_res.status_code == 200
+    s_init = start_res.json()
+    sid = s_init["session_id"]
+    assert s_init["flow_entities"] == ["name", "phone", "pan", "email", "pincode", "address"]
+    assert s_init["call_status"] == "Live"
+    assert s_init["active_target_id"] == "name"
 
-    # Turn 1: Greeting
+    # Turn 1: Name captured -> readback_sent, NOT confirmed yet
     t1 = client.post(
         "/api/voice/process-dialogue",
         headers=auth_headers,
-        json={"text": "Namaste", "session_id": sid},
+        json={"text": "Mera naam Soham hai", "session_id": sid, "active_target_id": "name"},
     ).json()
-    assert t1["active_target_id"] == "name"
+    assert t1["action"] == "confirm_entity"
+    assert t1["entities"]["name"]["value"].lower() == "soham"
+    assert t1["entities"]["name"]["status"] == "readback_sent"
+    assert "se " in t1["reply"] and "kya ye sahi hai" in t1["reply"].lower()
 
-    # Turn 2: Name captured -> NOT verified yet
-    t2 = client.post(
-        "/api/voice/process-dialogue",
-        headers=auth_headers,
-        json={"text": "Mera naam Soham hai", "session_id": sid, "active_target_id": t1["active_target_id"]},
-    ).json()
-    assert t2["action"] == "confirm_entity"
-    assert t2["entities"]["name"]["value"].lower() == "soham"
-    assert t2["entities"]["name"]["status"] != "verified"
-
-    # DB verification: unconfirmed entity must NEVER be saved as verified
+    # DB verification: unconfirmed entity must NEVER be saved as confirmed/verified
     db_sess = db.get_session_by_id(sid)
     name_rows = [e for e in db_sess["entities"] if e["entity_type"] == "name"]
     assert len(name_rows) == 1
-    assert name_rows[0]["status"] != "verified"
+    assert name_rows[0]["status"] not in ("confirmed", "verified")
 
-    # Turn 3: Vocal correction ("Nahi galat hai, mera naam Soham Sharma hai")
-    t3 = client.post(
+    # Turn 2: Vocal correction ("Nahi galat hai, mera naam Soham Sharma hai")
+    t2 = client.post(
         "/api/voice/process-dialogue",
         headers=auth_headers,
         json={
@@ -256,35 +255,33 @@ def test_06_multi_turn_verification_correction_and_database(auth_headers):
             "active_target_id": "name",
         },
     ).json()
-    assert "Soham Sharma" in t3["entities"]["name"]["value"]
-    assert t3["entities"]["name"]["status"] != "verified"  # Still unconfirmed after correction
+    assert "Soham Sharma" in t2["entities"]["name"]["value"]
+    assert t2["entities"]["name"]["status"] not in ("confirmed", "verified")
 
-    # Turn 4: Customer affirms ("Haan, bilkul sahi hai")
-    t4 = client.post(
+    # Turn 3: Customer affirms ("Haan, bilkul sahi hai")
+    t3 = client.post(
         "/api/voice/process-dialogue",
         headers=auth_headers,
         json={"text": "Haan, bilkul sahi hai", "session_id": sid, "active_target_id": "name"},
     ).json()
-    assert t4["entities"]["name"]["status"] == "verified"
-    assert t4["active_target_id"] == "phone"
+    assert t3["entities"]["name"]["status"] == "confirmed"
+    assert t3["active_target_id"] == "phone"
 
     # Verify DB confirmation + correction logs persisted
     db_after = db.get_session_by_id(sid)
     assert db_after["corrections"] >= 1
     assert db_after["customer_name"] == "Soham Sharma"
-    assert len(db_after["dialogue_log"]) >= 8
+    assert len(db_after["audit_trail"]) >= 4
 
-    # Complete remaining critical entities (Phone, Email, Address, Amount, DOB, Account, PAN)
+    # Complete remaining default flow fields (Phone, PAN, Email, Pincode, Address)
     remaining_turns = [
         ("9876543210", "phone"),
+        ("ABCDE1234F", "pan"),
         ("soham@example.com", "email"),
-        ("24 MG Road, Pune, 411001", "address"),
-        ("50000 rupees", "amount"),
-        ("15 August 1998", "dob"),
-        ("123456789012", "account"),
-        ("ABCDE1234F", "id_doc"),
+        ("411001", "pincode"),
+        ("24 MG Road, Pune, Maharashtra", "address"),
     ]
-    current_target = t4["active_target_id"]
+    current_target = t3["active_target_id"]
     for spoken, expected_id in remaining_turns:
         assert current_target == expected_id
         cap = client.post(
@@ -292,22 +289,31 @@ def test_06_multi_turn_verification_correction_and_database(auth_headers):
             headers=auth_headers,
             json={"text": spoken, "session_id": sid, "active_target_id": current_target},
         ).json()
-        assert cap["entities"][expected_id]["status"] != "verified"
+        assert cap["entities"][expected_id]["status"] not in ("confirmed", "verified")
 
         conf = client.post(
             "/api/voice/process-dialogue",
             headers=auth_headers,
             json={"text": "Haan, bilkul sahi", "session_id": sid, "active_target_id": expected_id},
         ).json()
-        assert conf["entities"][expected_id]["status"] == "verified"
+        assert conf["entities"][expected_id]["status"] == "confirmed"
         current_target = conf["active_target_id"]
 
     assert conf["action"] == "all_confirmed"
     assert conf["session_status"] == "Verified"
-    assert conf["verified_count"] == 8
+    assert conf["verified_count"] == 6
     final_db = db.get_session_by_id(sid)
     assert final_db["status"] == "Verified"
-    assert "Confirmed (8)" in final_db["verification_summary"]
+    assert final_db["metrics"]["confirmed_count"] == 6
+
+    # Verify custom configurable flow (e.g. 3 fields) works independently
+    custom_res = client.post(
+        "/api/sessions/new/start",
+        headers=auth_headers,
+        json={"flow_entities": ["name", "phone", "pan"], "phonetic_scheme": "nato"},
+    ).json()
+    assert len(custom_res["flow_entities"]) == 3
+    assert custom_res["phonetic_scheme"] == "nato"
 
 
 # 7. DASHBOARD REAL METRICS & ERROR MANAGEMENT
@@ -346,3 +352,194 @@ def test_07_dashboard_metrics_and_error_handling(auth_headers):
         json={"text": ""},
     )
     assert bad_tts.status_code in (400, 422)
+
+
+# 8. REQUIRED DEMO SCRIPT: "Raul" -> "R se Ram..." -> "Nahi, H hai" -> "Rahul" -> "Haan" -> Confirmed + Log
+def test_08_demo_script_raul_to_rahul_character_correction(auth_headers):
+    start = client.post(
+        "/api/sessions/new/start",
+        headers=auth_headers,
+        json={"flow_entities": ["name", "phone"], "phonetic_scheme": "indian"},
+    ).json()
+    sid = start["session_id"]
+
+    # Step 1: STT captures "Raul"
+    s1 = client.post(
+        "/api/voice/process-dialogue",
+        headers=auth_headers,
+        json={"text": "Raul", "session_id": sid, "active_target_id": "name", "acoustic_confidence": 74.0},
+    ).json()
+    assert s1["entities"]["name"]["value"] == "Raul"
+    assert s1["entities"]["name"]["status"] == "readback_sent"
+    assert s1["entities"]["name"]["stt_confidence"] == 74.0
+    assert "validator_confidence" in s1["entities"]["name"]
+    # Middle vowel hiatus should flag low confidence characters
+    assert any(c["low_conf"] for c in s1["entities"]["name"]["charConfidences"])
+    assert "R se Ram, A se Amit, U se Umesh, L se Lal" in s1["reply"]
+    assert "Kya ye sahi hai?" in s1["reply"]
+
+    # Step 2: Customer says "Nahi, H hai" -> inserts missing 'H' without losing other chars
+    s2 = client.post(
+        "/api/voice/process-dialogue",
+        headers=auth_headers,
+        json={"text": "Nahi, H hai", "session_id": sid, "active_target_id": "name", "acoustic_confidence": 92.0},
+    ).json()
+    assert s2["entities"]["name"]["value"] == "Rahul"
+    assert s2["entities"]["name"]["previousValue"] == "Raul"
+    assert s2["entities"]["name"]["status"] == "readback_sent"
+    assert "R se Ram, A se Amit, H se Hari, U se Umesh, L se Lal" in s2["reply"]
+    assert "Kya ye sahi hai?" in s2["reply"]
+
+    # Step 3: Customer says "Haan" -> Confirmed & correction logged for training
+    s3 = client.post(
+        "/api/voice/process-dialogue",
+        headers=auth_headers,
+        json={"text": "Haan", "session_id": sid, "active_target_id": "name", "acoustic_confidence": 96.0},
+    ).json()
+    assert s3["entities"]["name"]["status"] == "confirmed"
+    logs = db.get_correction_logs(limit=50)
+    assert any(
+        l["session_id"] == sid and l["entity_type"] == "name" and l["original_value"] == "Raul" and l["corrected_value"] == "Rahul"
+        for l in logs
+    )
+
+
+# 9. RULE VALIDATORS, 3-FAILURE ESCALATION, ECHO GUARD, & CONFIRMED OVERWRITE PROTECTION
+def test_09_validators_escalation_echo_guard_and_overwrite_lock(auth_headers):
+    start = client.post(
+        "/api/sessions/new/start",
+        headers=auth_headers,
+        json={"flow_entities": ["name", "phone", "pan"], "phonetic_scheme": "indian"},
+    ).json()
+    sid = start["session_id"]
+
+    # Bad name with intent/verb phrase must fail rule validation & ask customer to repeat
+    bad_name = client.post(
+        "/api/voice/process-dialogue",
+        headers=auth_headers,
+        json={"text": "confirm kar sakta hoon", "session_id": sid, "active_target_id": "name"},
+    ).json()
+    assert bad_name["action"] == "validation_failed"
+    assert bad_name["entities"]["name"]["validation_passed"] is False
+    assert "verbs" in bad_name["entities"]["name"]["failed_rule"].lower() or "intent" in bad_name["entities"]["name"]["failed_rule"].lower()
+    assert bad_name["entities"]["name"]["validator_confidence"] < 50.0
+    assert bad_name["entities"]["name"]["status"] not in ("confirmed", "verified", "readback_sent")
+
+    # 2nd and 3rd consecutive failed attempt on name -> auto escalation after 3 failures
+    fail2 = client.post(
+        "/api/voice/process-dialogue",
+        headers=auth_headers,
+        json={"text": "12345", "session_id": sid, "active_target_id": "name"},
+    ).json()
+    assert fail2["action"] == "validation_failed"
+
+    fail3 = client.post(
+        "/api/voice/process-dialogue",
+        headers=auth_headers,
+        json={"text": "99887", "session_id": sid, "active_target_id": "name"},
+    ).json()
+    assert fail3["action"] == "escalated"
+    assert fail3["call_status"] == "Escalated"
+    assert fail3["entities"]["name"]["status"] == "escalated"
+    assert fail3["metrics"]["escalation_count"] >= 1
+
+    # Fresh session: test PAN, Phone validators + "N nahi, M hai" + AI echo guard + overwrite block
+    s2 = client.post(
+        "/api/sessions/new/start",
+        headers=auth_headers,
+        json={"flow_entities": ["name", "phone", "pan"], "phonetic_scheme": "indian"},
+    ).json()
+    sid2 = s2["session_id"]
+
+    # Character replacement "N nahi, M hai" on "Sona" -> "Soma"
+    client.post(
+        "/api/voice/process-dialogue",
+        headers=auth_headers,
+        json={"text": "Sona", "session_id": sid2, "active_target_id": "name"},
+    )
+    rep = client.post(
+        "/api/voice/process-dialogue",
+        headers=auth_headers,
+        json={"text": "N nahi, M hai", "session_id": sid2, "active_target_id": "name"},
+    ).json()
+    assert rep["entities"]["name"]["value"] == "Soma"
+    client.post(
+        "/api/voice/process-dialogue",
+        headers=auth_headers,
+        json={"text": "Haan", "session_id": sid2, "active_target_id": "name"},
+    )
+
+    # AI Echo Guard: feeding agent's prompt back must not overwrite Phone or anything
+    echo_res = client.post(
+        "/api/voice/process-dialogue",
+        headers=auth_headers,
+        json={"text": "Ab apna 10-digit mobile number batayein. Kya ye sahi hai?", "session_id": sid2, "active_target_id": "phone"},
+    ).json()
+    assert echo_res["action"] == "echo_ignored"
+
+    # Bad phone (< 10 digits) rejected with explicit failed rule
+    bad_phone = client.post(
+        "/api/voice/process-dialogue",
+        headers=auth_headers,
+        json={"text": "98765", "session_id": sid2, "active_target_id": "phone"},
+    ).json()
+    assert bad_phone["action"] == "validation_failed"
+    assert "10 digits" in bad_phone["entities"]["phone"]["validation_message"]
+
+    # Good phone confirmed, then bad PAN rejected with "PAN must match AAAAA9999A"
+    client.post("/api/voice/process-dialogue", headers=auth_headers, json={"text": "9876543210", "session_id": sid2, "active_target_id": "phone"})
+    client.post("/api/voice/process-dialogue", headers=auth_headers, json={"text": "Ji", "session_id": sid2, "active_target_id": "phone"})
+    bad_pan = client.post(
+        "/api/voice/process-dialogue",
+        headers=auth_headers,
+        json={"text": "ABC123", "session_id": sid2, "active_target_id": "pan"},
+    ).json()
+    assert bad_pan["action"] == "validation_failed"
+    assert "PAN must match AAAAA9999A" in bad_pan["entities"]["pan"]["validation_message"]
+
+    # Block silent overwrite on already-confirmed 'name' ("Soma") via PATCH or /confirm
+    patch_block = client.patch(
+        f"/api/entities/{sid2}__name",
+        headers=auth_headers,
+        json={"value": "HackedName"},
+    )
+    assert patch_block.status_code == 400
+    conf_block = client.post(
+        "/api/entities/confirm",
+        headers=auth_headers,
+        json={"session_id": sid2, "entity_id": f"{sid2}__name", "entity_type": "name", "confirmed_value": "AnotherName", "confidence": 99},
+    )
+    assert conf_block.status_code == 400
+
+
+# 10. REAL-TIME WEBSOCKET SNAPSHOT & PUSH EVENTS + SCHEME SWITCH
+def test_10_websocket_realtime_events_and_scheme_switch(auth_headers):
+    token = auth_headers["Authorization"].split(" ", 1)[1]
+    start = client.post(
+        "/api/sessions/new/start",
+        headers=auth_headers,
+        json={"flow_entities": ["name", "phone"], "phonetic_scheme": "indian"},
+    ).json()
+    sid = start["session_id"]
+
+    with client.websocket_connect(f"/api/ws/sessions/{sid}?token={token}") as ws:
+        snap = ws.receive_json()
+        assert snap["type"] == "session_snapshot"
+        assert snap["data"]["session_id"] == sid
+
+        # Trigger server state push via scheme change to NATO
+        sch = client.post(
+            f"/api/sessions/{sid}/scheme",
+            headers=auth_headers,
+            json={"phonetic_scheme": "nato"},
+        )
+        assert sch.status_code == 200
+        pushed = ws.receive_json()
+        assert pushed["type"] == "session_state"
+        assert pushed["data"]["phonetic_scheme"] == "nato"
+
+        # End call triggers real-time push with call_status='Ended'
+        end_res = client.post(f"/api/sessions/{sid}/end", headers=auth_headers)
+        assert end_res.status_code == 200
+        ended_evt = ws.receive_json()
+        assert ended_evt["data"]["call_status"] == "Ended"

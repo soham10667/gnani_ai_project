@@ -194,7 +194,14 @@ export async function extractEntitiesAPI(text, confidence = 90.0, targetId = nul
   return res.json();
 }
 
-export async function confirmEntityAPI(sessionId, entityId, entityType, confirmedValue, confidence) {
+export async function confirmEntityAPI(
+  sessionId,
+  entityId,
+  entityType,
+  confirmedValue,
+  confidence,
+  manualFallback = true
+) {
   const res = await authFetch('/entities/confirm', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -204,6 +211,7 @@ export async function confirmEntityAPI(sessionId, entityId, entityType, confirme
       entity_type: entityType,
       confirmed_value: confirmedValue,
       confidence,
+      manual_fallback: manualFallback,
     }),
   });
   if (!res.ok) throw new Error(await parseErrorDetail(res, 'Entity confirmation failed'));
@@ -258,7 +266,8 @@ export async function transcribeAudioBlob(
   sessionIdOrFilename = null,
   targetId = null,
   language = 'indic-auto',
-  previousText = null
+  previousText = null,
+  phoneticScheme = null
 ) {
   const filename =
     sessionIdOrFilename && typeof sessionIdOrFilename === 'string' && sessionIdOrFilename.includes('.')
@@ -275,6 +284,7 @@ export async function transcribeAudioBlob(
   if (sessionId) formData.append('session_id', sessionId);
   if (targetId) formData.append('target_id', targetId);
   if (previousText) formData.append('previous_text', previousText);
+  if (phoneticScheme) formData.append('phonetic_scheme', phoneticScheme);
 
   const res = await authFetch('/voice/transcribe', {
     method: 'POST',
@@ -291,7 +301,8 @@ export async function processDialogueAPI(
   sessionId = null,
   activeTargetId = null,
   entities = null,
-  acousticConfidence = 92.0
+  acousticConfidence = 92.0,
+  phoneticScheme = null
 ) {
   const res = await authFetch('/voice/process-dialogue', {
     method: 'POST',
@@ -302,6 +313,7 @@ export async function processDialogueAPI(
       active_target_id: activeTargetId,
       entities,
       acoustic_confidence: acousticConfidence,
+      phonetic_scheme: phoneticScheme,
     }),
   });
   if (!res.ok) {
@@ -380,6 +392,57 @@ export async function downloadComplianceCSV() {
   a.click();
   document.body.removeChild(a);
   URL.revokeObjectURL(url);
+}
+
+// --- LIVE CALL CONTROL & REALTIME PUSH ---
+export async function startCallAPI(sessionId = 'new', { flowEntities = null, phoneticScheme = 'indian' } = {}) {
+  const res = await authFetch(`/sessions/${encodeURIComponent(sessionId || 'new')}/start`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      flow_entities: flowEntities,
+      phonetic_scheme: phoneticScheme,
+    }),
+  });
+  if (!res.ok) throw new Error(await parseErrorDetail(res, 'Failed to start verification call'));
+  return res.json();
+}
+
+export async function endCallAPI(sessionId) {
+  const res = await authFetch(`/sessions/${encodeURIComponent(sessionId)}/end`, {
+    method: 'POST',
+  });
+  if (!res.ok) throw new Error(await parseErrorDetail(res, 'Failed to end verification call'));
+  return res.json();
+}
+
+export async function setPhoneticSchemeAPI(sessionId, phoneticScheme) {
+  const res = await authFetch(`/sessions/${encodeURIComponent(sessionId)}/scheme`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ phonetic_scheme: phoneticScheme }),
+  });
+  if (!res.ok) throw new Error(await parseErrorDetail(res, 'Failed to switch phonetic scheme'));
+  return res.json();
+}
+
+export function getSessionEventsWebSocketUrl(sessionId) {
+  if (typeof window === 'undefined' || !sessionId) return '';
+  const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const token = getStoredToken() || '';
+  return `${proto}//${window.location.host}/api/ws/sessions/${encodeURIComponent(sessionId)}?token=${encodeURIComponent(token)}`;
+}
+
+export function getSessionEventsSseUrl(sessionId) {
+  if (!sessionId) return '';
+  const token = getStoredToken() || '';
+  return `/api/sessions/${encodeURIComponent(sessionId)}/events?token=${encodeURIComponent(token)}`;
+}
+
+export function getAudioClipUrl(clipRef) {
+  if (!clipRef) return '';
+  const token = getStoredToken() || '';
+  return `/api/voice/clips/${encodeURIComponent(clipRef)}?token=${encodeURIComponent(token)}`;
 }
 
 // Backwards-compatible aliases used by existing components

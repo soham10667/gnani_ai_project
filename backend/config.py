@@ -76,8 +76,9 @@ class Settings:
     THRESHOLD_MANDATORY_READBACK: float = float(os.getenv("THRESHOLD_MANDATORY_READBACK", "75.0"))
     THRESHOLD_AUTO_REJECT: float = float(os.getenv("THRESHOLD_AUTO_REJECT", "60.0"))
 
-    # Phonetic Standard: "nato" | "indian" | "digit_grouped"
-    PHONETIC_STANDARD: str = os.getenv("PHONETIC_STANDARD", "nato")
+    # Phonetic Standard: "indian" | "nato"
+    PHONETIC_STANDARD: str = os.getenv("PHONETIC_STANDARD", "indian")
+    DEFAULT_FLOW_ENTITIES: List[str] = ["name", "phone", "pan", "email", "pincode", "address"]
 
     # Security / Audio Limits
     MAX_AUDIO_UPLOAD_MB: int = int(os.getenv("MAX_AUDIO_UPLOAD_MB", "15"))

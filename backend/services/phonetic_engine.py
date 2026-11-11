@@ -13,17 +13,19 @@ NATO_PHONETIC = {
     '@': 'At-Sign', '.': 'Dot', '-': 'Dash', '_': 'Underscore'
 }
 
-# Indian Banking Colloquial Standard
-INDIAN_BANKING_PHONETIC = {
-    'A': 'Apple', 'B': 'Bombay', 'C': 'Chennai', 'D': 'Delhi', 'E': 'Elephant',
-    'F': 'Faridabad', 'G': 'Gujarat', 'H': 'Haryana', 'I': 'India', 'J': 'Jaipur',
-    'K': 'Kolkata', 'L': 'Lucknow', 'M': 'Mumbai', 'N': 'Nagpur', 'O': 'Orissa',
-    'P': 'Pune', 'Q': 'Queen', 'R': 'Ranchi', 'S': 'Shimla', 'T': 'Tamil',
-    'U': 'Uttar', 'V': 'Varanasi', 'W': 'West', 'X': 'X-ray', 'Y': 'Yamuna', 'Z': 'Zari',
+# Indian-Friendly Phonetic Standard ("A se Amit, B se Babu")
+INDIAN_FRIENDLY_PHONETIC = {
+    'A': 'Amit', 'B': 'Babu', 'C': 'Chandra', 'D': 'Deepak', 'E': 'Ekta',
+    'F': 'Farid', 'G': 'Gopal', 'H': 'Hari', 'I': 'Indira', 'J': 'Jatin',
+    'K': 'Kiran', 'L': 'Lal', 'M': 'Mohan', 'N': 'Neha', 'O': 'Om',
+    'P': 'Pooja', 'Q': 'Qadir', 'R': 'Ram', 'S': 'Sita', 'T': 'Tara',
+    'U': 'Umesh', 'V': 'Vijay', 'W': 'Waseem', 'X': 'X-ray', 'Y': 'Yash', 'Z': 'Zoya',
     '0': 'Zero', '1': 'One', '2': 'Two', '3': 'Three', '4': 'Four',
     '5': 'Five', '6': 'Six', '7': 'Seven', '8': 'Eight', '9': 'Nine',
-    '@': 'At-Sign', '.': 'Dot', '-': 'Dash', '_': 'Underscore'
+    '@': 'At', '.': 'Dot', '-': 'Dash', '_': 'Underscore'
 }
+# Alias for backwards compatibility
+INDIAN_BANKING_PHONETIC = INDIAN_FRIENDLY_PHONETIC
 
 DIGIT_WORDS = {
     '0': 'Zero', '1': 'One', '2': 'Two', '3': 'Three', '4': 'Four',
@@ -118,12 +120,17 @@ def devanagari_to_latin(text: str) -> str:
 
 class PhoneticEngine:
     @staticmethod
-    def get_phonetic_spelling(text: str, standard: str = "nato") -> List[Dict[str, str]]:
+    def _connector(standard: str) -> str:
+        return "for" if (standard or "").lower() == "nato" else "se"
+
+    @staticmethod
+    def get_phonetic_spelling(text: str, standard: str = "indian") -> List[Dict[str, str]]:
         if not text:
             return []
 
         latin_text = devanagari_to_latin(str(text))
-        dict_map = INDIAN_BANKING_PHONETIC if standard == "indian" else NATO_PHONETIC
+        use_nato = (standard or "indian").lower() == "nato"
+        dict_map = NATO_PHONETIC if use_nato else INDIAN_FRIENDLY_PHONETIC
         clean = re.sub(r'[^A-Za-z0-9@._-]', '', latin_text).upper()
 
         return [
@@ -132,75 +139,81 @@ class PhoneticEngine:
         ]
 
     @staticmethod
-    def format_phonetic_summary(text: str, entity_type: str = "alpha", standard: str = "nato") -> str:
+    def format_phonetic_summary(text: str, entity_type: str = "alpha", standard: str = "indian") -> str:
         if not text:
             return ""
 
-        if entity_type in ("numeric", "phone", "account") or (str(text).isdigit() and len(str(text)) >= 10):
+        conn = PhoneticEngine._connector(standard)
+        etype = (entity_type or "").lower()
+
+        if etype in ("numeric", "phone", "account", "pincode") or (str(text).isdigit() and len(str(text)) >= 6):
             digits = list(re.sub(r'\D', '', str(text)))
-            return "-".join(digits) + " (Individual Digits)"
+            return " ".join(digits)
 
-        elif entity_type == "amount":
-            return f"INR {text} (Verified Currency)"
-
-        elif entity_type == "email":
+        if etype == "email":
             parts = str(text).split('@')
             if len(parts) == 2:
-                user_ph = " ".join([p['char'] for p in PhoneticEngine.get_phonetic_spelling(parts[0], standard)[:6]])
-                return f"{user_ph} @ {parts[1]}"
+                local_ph = ", ".join([f"{p['char']} {conn} {p['code']}" for p in PhoneticEngine.get_phonetic_spelling(parts[0], standard)])
+                return f"{local_ph} @ {parts[1]}"
             return str(text)
 
-        elif entity_type == "address":
+        if etype == "address":
             latin = devanagari_to_latin(str(text))
             parts = [p.strip() for p in latin.split(',') if p.strip()]
             formatted_parts = []
             for part in parts:
                 digits_match = re.search(r'\b\d{6}\b', part)
                 if digits_match:
-                    pin = "-".join(list(digits_match.group()))
-                    part = re.sub(r'\b\d{6}\b', f"Pin {pin}", part)
+                    pin = " ".join(list(digits_match.group()))
+                    part = re.sub(r'\b\d{6}\b', f"PIN {pin}", part)
                 formatted_parts.append(part)
             return ", ".join(formatted_parts)
 
-        else:
-            phonetics = PhoneticEngine.get_phonetic_spelling(text, standard)
-            if not phonetics:
-                return str(text)
-            summary_items = [f"{p['char']}-{p['code']}" for p in phonetics[:6]]
-            summary = ", ".join(summary_items)
-            if len(phonetics) > 6:
-                summary += " ..."
-            return summary
+        phonetics = PhoneticEngine.get_phonetic_spelling(text, standard)
+        if not phonetics:
+            return str(text)
+        return ", ".join([f"{p['char']} {conn} {p['code']}" for p in phonetics])
 
     @staticmethod
-    def generate_readback_sentence(entity_label: str, value: str, entity_type: str = "alpha", standard: str = "nato") -> str:
+    def generate_readback_sentence(entity_label: str, value: str, entity_type: str = "alpha", standard: str = "indian") -> str:
         if not value:
             return f"Kripya apna {entity_label} batayein."
 
-        if entity_type in ("numeric", "phone", "account") or str(value).isdigit():
+        scheme = (standard or "indian").lower()
+        conn = PhoneticEngine._connector(scheme)
+        etype = (entity_type or "").lower()
+
+        if etype in ("numeric", "phone", "account", "pincode") or str(value).isdigit():
             digits = re.sub(r'\D', '', str(value))
             spaced_digits = " ".join(list(digits))
             return f"Maine aapka {entity_label} note kiya hai: {spaced_digits}. Kya ye sahi hai?"
 
-        elif entity_type == "email":
-            return f"Maine aapka Email Address {value} note kiya hai. Kya ye bilkul sahi hai?"
+        if etype == "email":
+            parts = str(value).split('@')
+            if len(parts) == 2:
+                phonetics = PhoneticEngine.get_phonetic_spelling(parts[0], scheme)
+                spelled = ", ".join([f"{p['char']} {conn} {p['code']}" for p in phonetics])
+                domain_spoken = parts[1].replace(".", " dot ")
+                return f"Maine aapka Email Address {value} note kiya hai — {spelled}, at {domain_spoken}. Kya ye sahi hai?"
+            return f"Maine aapka Email Address {value} note kiya hai. Kya ye sahi hai?"
 
-        elif entity_type == "amount":
+        if etype == "amount":
             return f"Maine aapka amount Rupees {value} note kiya hai. Kya ye sahi hai?"
 
-        elif entity_type == "address":
-            return f"Maine aapka residential address note kiya hai: {value}. Kya ye address bilkul sahi hai?"
+        if etype == "address":
+            formatted_addr = PhoneticEngine.format_phonetic_summary(value, "address", scheme)
+            return f"Maine aapka Residential Address note kiya hai: {formatted_addr}. Kya ye sahi hai?"
 
-        elif entity_type in ("date", "dob"):
+        if etype in ("date", "dob"):
             return f"Maine aapki Date of Birth {value} note ki hai. Kya ye sahi hai?"
 
-        else:
-            phonetics = PhoneticEngine.get_phonetic_spelling(value, standard)
-            if phonetics:
-                spelled_letters = "-".join([p['char'] for p in phonetics[:10]])
-                spelled_codes = ", ".join([f"{p['char']} for {p['code']}" for p in phonetics[:5]])
-                return f"Achha! Aapka {entity_label} hai {value}, spelling {spelled_letters} ({spelled_codes}). Kya ye sahi hai?"
-            return f"Maine aapka {entity_label} note kiya hai: {value}. Kya ye bilkul sahi hai?"
+        phonetics = PhoneticEngine.get_phonetic_spelling(value, scheme)
+        if phonetics:
+            spelled_codes = ", ".join(
+                [f"{p['char']} {conn} {p['code']}" if p['char'].isalpha() else p['code'] for p in phonetics]
+            )
+            return f"Maine aapka {entity_label} {value} note kiya hai: {spelled_codes}. Kya ye sahi hai?"
+        return f"Maine aapka {entity_label} {value} note kiya hai. Kya ye sahi hai?"
 
 
 phonetic_engine = PhoneticEngine()

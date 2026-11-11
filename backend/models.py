@@ -42,11 +42,17 @@ class SessionCreate(BaseModel):
     app_no: Optional[str] = Field(default=None, max_length=60)
     channel: Optional[str] = Field(default="Automated Voice Agent", max_length=60)
     status: Optional[str] = Field(default="In Progress", max_length=30)
-    entity_count: Optional[int] = Field(default=8, ge=1, le=20)
+    call_status: Optional[str] = Field(default="Live", max_length=30)
+    entity_count: Optional[int] = Field(default=6, ge=1, le=20)
+    flow_entities: Optional[List[str]] = None
+    phonetic_scheme: Optional[str] = Field(default="indian", max_length=20)
 
 
 class SessionUpdate(BaseModel):
     status: Optional[str] = Field(default=None, max_length=30)
+    call_status: Optional[str] = Field(default=None, max_length=30)
+    phonetic_scheme: Optional[str] = Field(default=None, max_length=20)
+    flow_entities: Optional[List[str]] = None
     initial_conf: Optional[float] = Field(default=None, ge=0.0, le=100.0)
     final_conf: Optional[float] = Field(default=None, ge=0.0, le=100.0)
     corrections: Optional[int] = Field(default=None, ge=0)
@@ -59,6 +65,8 @@ class SessionUpdate(BaseModel):
 class EntityUpdate(BaseModel):
     value: Optional[str] = Field(default=None, max_length=500)
     confidence: Optional[float] = Field(default=None, ge=0.0, le=100.0)
+    stt_confidence: Optional[float] = Field(default=None, ge=0.0, le=100.0)
+    validator_confidence: Optional[float] = Field(default=None, ge=0.0, le=100.0)
     status: Optional[str] = Field(default=None, max_length=30)
     validation_status: Optional[str] = Field(default=None, max_length=30)
     validation_message: Optional[str] = Field(default=None, max_length=300)
@@ -69,6 +77,8 @@ class ExtractRequest(BaseModel):
     text: str = Field(..., min_length=1, max_length=4000)
     acoustic_confidence: float = Field(default=90.0, ge=0.0, le=100.0)
     target_entity_id: Optional[str] = Field(default=None, max_length=40)
+    phonetic_scheme: Optional[str] = Field(default="indian", max_length=20)
+    flow_entities: Optional[List[str]] = None
 
 
 class ConfirmRequest(BaseModel):
@@ -77,6 +87,7 @@ class ConfirmRequest(BaseModel):
     entity_type: str = Field(..., min_length=1, max_length=40)
     confirmed_value: str = Field(..., min_length=1, max_length=500)
     confidence: float = Field(default=95.0, ge=0.0, le=100.0)
+    manual_fallback: bool = Field(default=True)
 
 
 class CorrectRequest(BaseModel):
@@ -103,3 +114,4 @@ class DialogueRequest(BaseModel):
     active_target_id: Optional[str] = Field(default=None, max_length=40)
     entities: Optional[Dict[str, Any]] = None
     acoustic_confidence: float = Field(default=92.0, ge=0.0, le=100.0)
+    phonetic_scheme: Optional[str] = Field(default=None, max_length=20)

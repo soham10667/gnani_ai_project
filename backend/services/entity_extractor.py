@@ -150,6 +150,30 @@ class AIEntityExtractor:
         return None
 
     @classmethod
+    def extract_pincode(cls, text: str) -> Optional[str]:
+        norm = cls.normalize_spoken_digits(text)
+        compact = re.sub(r'[\s\-\u0964]', '', norm)
+        # Prefer explicit pin/pincode trigger first
+        trig = re.search(
+            r'(?:pin\s*code|pincode|postal(?:\s+code)?|zip(?:\s+code)?|पिन\s*कोड|पिन)\s*(?:is|hai|:)?\s*([0-9\s\-]{5,10})',
+            norm,
+            re.IGNORECASE,
+        )
+        if trig:
+            d = re.sub(r'\D', '', trig.group(1))
+            if len(d) >= 4:
+                return d[:6] if len(d) >= 6 else d
+
+        m = re.search(r'(?<!\d)([1-9][0-9]{5})(?!\d)', compact)
+        if m:
+            return m.group(1)
+
+        digits = re.findall(r'\d', compact)
+        if len(digits) == 6:
+            return "".join(digits)
+        return None
+
+    @classmethod
     def extract_email(cls, text: str) -> Optional[str]:
         # 1. Direct email literal
         direct = re.search(r'\b([A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,})\b', text)
@@ -330,42 +354,67 @@ class AIEntityExtractor:
         return None
 
     @classmethod
-    def _build_entity_dict(cls, eid: str, label: str, ent_type: str, val: str, acoustic_confidence: float, status: str = "pending", is_repeat: bool = False, corr_attempt: int = 0) -> Dict[str, Any]:
+    def _build_entity_dict(
+        cls,
+        eid: str,
+        label: str,
+        ent_type: str,
+        val: str,
+        acoustic_confidence: float,
+        status: str = "captured",
+        is_repeat: bool = False,
+        corr_attempt: int = 0,
+        phonetic_scheme: str = "indian",
+    ) -> Dict[str, Any]:
         score = confidence_scorer.calculate_score(
             eid, val, acoustic_confidence, is_repeat_attempt=is_repeat, correction_attempt=corr_attempt
         )
-        # Never mark unconfirmed data as verified automatically!
         final_status = status
-        if score.get("needs_mandatory_readback") and status == "pending":
-            final_status = "flagged"
 
         return {
             "id": eid,
+            "entity_type": eid,
             "label": label,
             "value": score["normalized_value"],
             "type": ent_type,
             "confidence": score["confidence"],
+            "stt_confidence": score["stt_confidence"],
+            "validator_confidence": score["validator_confidence"],
+            "validationPassed": score["validation_passed"],
+            "failedRule": score["failed_rule"],
+            "invalidIndices": score["invalid_indices"],
+            "charConfidences": score["char_confidences"],
+            "lowConfIndices": score["low_conf_indices"],
             "status": final_status,
             "validationStatus": score["validation_status"],
             "validationMessage": score["validation_message"],
             "isUncertain": score["is_uncertain"],
             "needsConfirmation": True,
-            "phoneticSummary": phonetic_engine.format_phonetic_summary(score["normalized_value"], ent_type),
-            "phoneticDetails": phonetic_engine.get_phonetic_spelling(score["normalized_value"]),
+            "phoneticSummary": phonetic_engine.format_phonetic_summary(score["normalized_value"], ent_type, phonetic_scheme),
+            "phoneticDetails": phonetic_engine.get_phonetic_spelling(score["normalized_value"], phonetic_scheme),
             "history": [score["normalized_value"]],
         }
 
     @classmethod
-    def extract_all_entities(cls, text: str, acoustic_confidence: float = 90.0, target_id: Optional[str] = None) -> List[Dict[str, Any]]:
+    def extract_all_entities(
+        cls,
+        text: str,
+        acoustic_confidence: float = 90.0,
+        target_id: Optional[str] = None,
+        phonetic_scheme: str = "indian",
+        flow_entities: Optional[List[str]] = None,
+    ) -> List[Dict[str, Any]]:
         if not text or not text.strip():
             return []
-        if cls._is_pure_control_utterance(text):
+        if cls._is_pure_control_utterance(text) and not target_id:
             return []
 
         ent_meta = {
             "name": ("alpha", "Full Name", cls.extract_name),
             "phone": ("numeric", "Phone Number", cls.extract_phone),
+            "pan": ("alphanumeric", "PAN Card", cls.extract_id_doc),
             "email": ("email", "Email Address", cls.extract_email),
+            "pincode": ("numeric", "Pincode", cls.extract_pincode),
             "address": ("address", "Residential Address", cls.extract_address),
             "amount": ("amount", "Amount (INR)", cls.extract_amount),
             "dob": ("date", "Date of Birth", cls.extract_dob),
@@ -375,33 +424,67 @@ class AIEntityExtractor:
 
         extracted = []
 
-        # Focused target extraction (e.g. during correction OR direct answer to a specific question)
+        # Focused target extraction (direct answer or correction to active slot)
         if target_id and target_id in ent_meta:
             ent_type, label, extractor_fn = ent_meta[target_id]
             val = extractor_fn(text)
             if not val:
-                # Strip conversational correction/filler prefixes if directly replying to targeted prompt
                 cleaned = re.sub(
                     r'^(?:nahi|nahin|no|galat\s+hai|wrong|actually|it\s+is|mera|meri|correct\s+(?:value|is)?|नहीं|गलत)\b[\s,:\-]*',
                     '',
                     text.strip(),
-                    flags=re.IGNORECASE
+                    flags=re.IGNORECASE,
                 ).strip(' .।,')
+                # Keep raw candidate for rule-based validator to inspect & return real failed rule if not pure control word
                 if cleaned and not cls._is_pure_control_utterance(cleaned):
-                    val = devanagari_to_latin(cleaned).title() if target_id in ("name", "address") and re.search(r'[\u0900-\u097F]', cleaned) else cleaned
+                    if target_id in ("name", "address") and re.search(r'[\u0900-\u097F]', cleaned):
+                        val = devanagari_to_latin(cleaned).title()
+                    elif target_id in ("phone", "pincode"):
+                        val = cls.normalize_spoken_digits(cleaned)
+                    elif target_id == "pan":
+                        val = re.sub(r'[\s\-\u0964]', '', cleaned).upper()
+                    else:
+                        val = cleaned
 
             if val:
-                extracted.append(cls._build_entity_dict(target_id, label, ent_type, val, acoustic_confidence, status="pending"))
+                extracted.append(
+                    cls._build_entity_dict(
+                        target_id,
+                        label,
+                        ent_type,
+                        val,
+                        acoustic_confidence,
+                        status="captured",
+                        phonetic_scheme=phonetic_scheme,
+                    )
+                )
                 return extracted
 
-        # Broad multi-entity extraction across full transcript
-        for eid, (ent_type, label, extractor_fn) in ent_meta.items():
+        if cls._is_pure_control_utterance(text):
+            return []
+
+        allowed_ids = flow_entities if flow_entities else list(ent_meta.keys())
+        for eid in allowed_ids:
+            if eid not in ent_meta:
+                continue
+            ent_type, label, extractor_fn = ent_meta[eid]
             val = extractor_fn(text)
             if val:
-                # Avoid colliding account with extracted phone
                 if eid == "account" and any(e["id"] == "phone" and e["value"] == val for e in extracted):
                     continue
-                extracted.append(cls._build_entity_dict(eid, label, ent_type, val, acoustic_confidence, status="pending"))
+                if eid == "pan" and any(e["id"] == "id_doc" for e in extracted):
+                    continue
+                extracted.append(
+                    cls._build_entity_dict(
+                        eid,
+                        label,
+                        ent_type,
+                        val,
+                        acoustic_confidence,
+                        status="captured",
+                        phonetic_scheme=phonetic_scheme,
+                    )
+                )
 
         return extracted
 
